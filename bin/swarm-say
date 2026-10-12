@@ -10,6 +10,7 @@ ANET="${AGENT_NETWORK:-$KIT/image/agent-network}/packages/cli/bin/anet.mjs"
 [ -f "$ANET" ] || { echo "no host copy of agent-network at $(dirname "$ANET")/../../..; run bin/stage-agent-network.sh --build" >&2; exit 1; }
 KEEPER_ADDRESS="$(tr -d '[:space:]' < "$SWARM/keeper/address")"
 export AGENT_HOME="$SWARM/owner/home" AGENT_NAME=owner KEEPER_ADDRESS XMTP_ENV=${XMTP_ENV:-dev}
+[ -f "$SWARM/owner/home/key" ] || { echo "this machine uses an external owner; speak from the operator identity" >&2; exit 1; }
 if [ "${1:-}" = --inbox ]; then shift; exec node "$ANET" inbox "$@"; fi
 text=${1:?text}; target=${2:-$(cat "$SWARM/room")}
 if [ ${#text} -gt 4000 ] && [[ "$target" != @* ]]; then

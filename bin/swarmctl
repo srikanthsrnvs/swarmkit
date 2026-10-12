@@ -27,27 +27,50 @@
 set -euo pipefail
 KIT=$(cd "$(dirname "$0")/.." && pwd)
 SWARM=${SWARM_DIR:-$HOME/swarms/default}
-SWARM_NAME=$(basename "$SWARM")
-TAG=${AGENT_NETWORK_TAG:-$(cat "$SWARM/agent-network.tag" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}
-IMAGE=${IMAGE:-swarmkit-agent:$TAG}
+SWARM_NAME=$(cat "$SWARM/swarm-name" 2>/dev/null || basename "$SWARM")
+TAG=${AGENT_NETWORK_TAG:-$(cat "$SWARM/agent-network.tag" 2>/dev/null || cat "$KIT/agent-network.ref" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}
+IMAGE_OVERRIDE=${IMAGE:-}
+IMAGE=${IMAGE:-$(cat "$SWARM/image" 2>/dev/null || echo "swarmkit-agent:$TAG")}
 NAMES=(); [ -f "$SWARM/agents.txt" ] && mapfile -t NAMES < <(grep -v '^\s*$' "$SWARM/agents.txt")
 MODEL=${MODEL:-deepseek/deepseek-flash}
 PI_EXT=/opt/agent-network/adapters/pi
 TOOLS=${PI_TOOLS:-read,bash,edit,write,grep,find,ls,send,join,leave,members}
 LIMITS="$SWARM/limits.conf"   # lines: name mem cpus
-PORT_BASE=${SWARM_PORT_BASE:-9100}
+PORT_BASE=${SWARM_PORT_BASE:-$(cat "$SWARM/port-base" 2>/dev/null || echo 9100)}
 die() { echo "swarmctl: $*" >&2; exit 1; }
 need_swarm() { [ -f "$SWARM/names.json" ] || die "no swarm at $SWARM (run bin/swarm-init <name> --room <room>, or set SWARM_DIR)"; }
 keeper_address() { tr -d '[:space:]' < "$SWARM/keeper/address" 2>/dev/null || die "no keeper address at $SWARM/keeper/address"; }
-names_of() { if [ "${1:-}" = all ]; then echo "${NAMES[@]}"; else for n in "$@"; do printf '%s\n' "${NAMES[@]}" | grep -qx "$n" || die "unknown agent $n (not in $SWARM/agents.txt)"; done; echo "$@"; fi; }
+names_of() {
+  if [ "${1:-}" = all ]; then
+    for n in "${NAMES[@]}"; do
+      h=$(harness_of "$n")
+      [ "$h" != local ] || continue
+      if [ "$cmd" = launch ] || [ "$cmd" = unpark ]; then case "$h" in pi|sdk) ;; *) continue;; esac; fi
+      echo "$n"
+    done
+  else
+    for n in "$@"; do printf '%s\n' "${NAMES[@]}" | grep -qx "$n" || die "unknown agent $n"; done
+    printf '%s\n' "$@"
+  fi
+}
 limit_of() { local v; v=$(awk -v n="$1" -v f="$2" '$1==n { print (f=="mem" ? $2 : $3) }' "$LIMITS" 2>/dev/null); echo "${v:-$( [ "$2" = mem ] && echo 48g || echo 16 )}"; }
-port_base() { local i=0; for n in "${NAMES[@]}"; do [ "$n" = "$1" ] && echo $((PORT_BASE + i * 100)) && return; i=$((i+1)); done; }
+port_base() {
+  [ -f "$SWARM/$1/port-base" ] && { cat "$SWARM/$1/port-base"; return; }
+  local requested="" i=0
+  if [ -n "${SWARM_PORT_BASE:-}" ] || [ -f "$SWARM/port-base" ]; then
+    for n in "${NAMES[@]}"; do [ "$n" = "$1" ] && break; i=$((i+1)); done
+    requested=$((PORT_BASE + i * 100))
+  fi
+  local base
+  base=$(PYTHONPATH="$KIT${PYTHONPATH:+:$PYTHONPATH}" python3 -m swarmkit.registry ports "$1" ${requested:+--base "$requested"}) || return 1
+  echo "$base" > "$SWARM/$1/port-base"; echo "$base"
+}
 cname() { echo "swarmkit-$SWARM_NAME-$1"; }
 exists() { docker container inspect "$(cname "$1")" >/dev/null 2>&1; }
 running() { [ "$(docker container inspect -f '{{.State.Running}}' "$(cname "$1")" 2>/dev/null)" = true ]; }
 harness_of() { cat "$SWARM/$1/harness" 2>/dev/null || echo pi; }
 gpu_flags() {
-  case "${SWARM_GPU:-auto}" in
+  case "${SWARM_GPU:-$(cat "$SWARM/gpu-mode" 2>/dev/null || echo auto)}" in
     none) return;;
     cdi) echo "--device nvidia.com/gpu=all"; return;;
     gpus) echo "--gpus all"; return;;
@@ -65,17 +88,24 @@ case "$cmd" in
     while [ $# -gt 0 ]; do case "$1" in --tag) tag=$2; shift 2;; --cpu) cpu=1; shift;; *) die "unknown flag $1";; esac; done
     "$KIT/bin/stage-agent-network.sh" "$tag"
     base=(); [ $cpu = 1 ] && base=(--build-arg BASE_IMAGE=ubuntu:24.04)
-    cd "$KIT" && docker build -t "swarmkit-agent:$tag" --build-arg UID="$(id -u)" "${base[@]}" -f image/Dockerfile . \
-      && echo "built swarmkit-agent:$tag" ;;
+    suffix=""; [ $cpu = 0 ] || suffix=-cpu
+    target=${IMAGE_OVERRIDE:-swarmkit-agent:$tag$suffix}
+    cd "$KIT" && docker build -t "$target" --build-arg SWARMKIT_FINGERPRINT="$("$KIT/bin/image-fingerprint")" --build-arg AGENT_NETWORK_REF="$(cat "$KIT/image/agent-network/.commit")" --build-arg UID="$(id -u)" "${base[@]}" -f image/Dockerfile . \
+      && echo "built $target" ;;
   create)
     need_swarm
     recreate=0; [ "${1:-}" = --recreate ] && { recreate=1; shift; }
     keeper=$(keeper_address)
     docker image inspect "$IMAGE" >/dev/null 2>&1 || die "no image $IMAGE (run: swarmctl build --tag ${IMAGE#*:})"
+    expected=$("$KIT/bin/image-fingerprint")
+    actual=$(docker image inspect -f '{{index .Config.Labels "org.swarmkit.source"}}' "$IMAGE")
+    [ "$actual" = "$expected" ] || [ "${SWARM_ALLOW_STALE_IMAGE:-0}" = 1 ] || die "image is behind the source; run swarmctl build, then create --recreate"
     for n in $(names_of "$@"); do
       c=$(cname "$n")
       if exists "$n"; then
         [ $recreate = 1 ] || { echo "$c exists (use --recreate to rebuild it; /swarm/me and ~/.pi persist on the host)"; continue; }
+        docker exec -u agent "$c" tmux kill-session -t agent >/dev/null 2>&1 || true
+        docker exec -u agent "$c" anet daemon stop >/dev/null 2>&1 || true
         docker rm -f "$c" >/dev/null && echo "removed $c"
       fi
       mkdir -p "$SWARM/$n"/{home,memory,work,pi/agent,pi/agent/extensions,.ccache} "$SWARM/shared"/{models,builds,hf,extensions,status,locks,logs,bin} "$SWARM/prompts"
@@ -89,32 +119,38 @@ case "$cmd" in
         $(gpu_flags) --network host --shm-size "${SWARM_SHM:-16g}" --ulimit memlock=-1:-1 --pids-limit 8192 \
         --memory "$(limit_of "$n" mem)" --memory-swap "$(limit_of "$n" mem)" --cpus "$(limit_of "$n" cpus)" \
         --env-file "$SWARM/env" $( [ -f "$SWARM/$n/env" ] && printf -- "--env-file %s" "$SWARM/$n/env" ) \
+        -e SWARM_ROOM="$(cat "$SWARM/room")" -e GPU_LOCK_DIR=/swarm/shared/locks \
         -e AGENT_HOME=/swarm/me/home -e AGENT_NAME="$n" -e AGENT_UNATTENDED=1 -e AGENT_HEARTBEAT_MINUTES="${AGENT_HEARTBEAT_MINUTES:-20}" \
         -e KEEPER_ADDRESS="$keeper" -e XMTP_ENV="${XMTP_ENV:-dev}" -e SWARM_PORT_BASE="$(port_base "$n")" -e SWARM_NAME="$SWARM_NAME" \
         --add-host "$n:127.0.0.1" -e MAKEFLAGS="-j$(limit_of "$n" cpus)" -e CMAKE_BUILD_PARALLEL_LEVEL="$(limit_of "$n" cpus)" -e OMP_NUM_THREADS="$(limit_of "$n" cpus)" -e SWARM_CPUS="$(limit_of "$n" cpus)" \
-        -v "$SWARM/$n:/swarm/me" -v "$SWARM/$n/pi:/home/agent/.pi" -v "$SWARM/shared:/swarm/shared" -v "$SWARM/prompts:/swarm/prompts:ro" \
+        -v "$(cat "$SWARM/shared/gpu-lock-dir"):/swarm/shared/locks" -v "$SWARM/$n:/swarm/me" -v "$SWARM/$n/pi:/home/agent/.pi" -v "$SWARM/shared:/swarm/shared" -v "$SWARM/prompts:/swarm/prompts:ro" \
         "$IMAGE" >/dev/null
       echo "created $c (mem $(limit_of "$n" mem), cpus $(limit_of "$n" cpus), ports $(port_base "$n")-$(( $(port_base "$n") + 99 )), gpu: ${SWARM_GPU:-auto}$( [ -z "$(gpu_flags)" ] && echo " -> none"))"
     done ;;
   start|stop|restart)
     for n in $(names_of "$@"); do docker "$cmd" "$(cname "$n")" >/dev/null && echo "$cmd $(cname "$n")"; done ;;
-  launch)
+  launch|unpark)
     need_swarm
+    "$KIT/bin/swarm-refresh"
     first=1
     for n in $(names_of "$@"); do
-      c=$(cname "$n"); running "$n" || die "$c is not running"
+      c=$(cname "$n")
+      actual=$(docker inspect -f '{{index .Config.Labels "org.swarmkit.source"}}' "$c")
+      [ "$actual" = "$("$KIT/bin/image-fingerprint")" ] || [ "${SWARM_ALLOW_STALE_IMAGE:-0}" = 1 ] || die "$c uses old software; build and recreate it before launch"
+      running "$n" || die "$c is not running"
       if in_tmux "$n"; then echo "$n: harness already running"; continue; fi
       [ $first = 1 ] || sleep "${STAGGER:-20}"; first=0
       model=$(cat "$SWARM/$n/model" 2>/dev/null || echo "$MODEL")   # per-agent model override: <swarm>/<name>/model
       case "$(harness_of "$n")" in
         pi)
           [ -f "$SWARM/prompts/$n.md" ] || die "no prompt at $SWARM/prompts/$n.md"
+          docker exec -u agent "$c" anet daemon stop >/dev/null
           line="pi -e $PI_EXT --system-prompt /swarm/prompts/$n.md --tools $TOOLS --no-context-files --model $model --session-id swarm 2>>/swarm/me/pi.stderr.log; echo 'pi exited'; sleep 999999" ;;
         sdk)
           # the OpenAI Agents SDK runner over the sandbox's own anet daemon (unix socket); provider from <swarm>/env
           [ -f "$SWARM/prompts/$n.lane" ] || die "no lane at $SWARM/prompts/$n.lane"
           api=$(cat "$SWARM/$n/sdk.conf" 2>/dev/null || cat "$SWARM/sdk.conf" 2>/dev/null || echo "--model ${model#*/} --base-url https://api.deepseek.com/v1 --api-key-env DEEPSEEK_API_KEY")
-          line="anet daemon >/dev/null && python -m swarmkit.run --name $n --lane-file /swarm/prompts/$n.lane --template /swarm/prompts/prompt.template.md --swarm-dir /swarm --room \$SWARM_ROOM $api 2>>/swarm/me/sdk.stderr.log; echo 'runner exited'; sleep 999999" ;;
+          line="anet daemon >/dev/null && python -m swarmkit.run --execution sandbox --name $n --lane-file /swarm/prompts/$n.lane --template /swarm/prompts/prompt.template.md --swarm-dir /swarm --room \$SWARM_ROOM $api 2>>/swarm/me/sdk.stderr.log; echo 'runner exited'; sleep 999999" ;;
         *) die "$n: unknown harness '$(harness_of "$n")' (pi|sdk)";;
       esac
       docker exec -d -u agent -w /swarm/me/work -e SWARM_ROOM="$(cat "$SWARM/room" 2>/dev/null || echo swarm)" "$c" tmux new -d -s agent -x 200 -y 50 "$line"
@@ -126,7 +162,7 @@ case "$cmd" in
   attach)   docker exec -it -u agent "$(cname "$1")" tmux attach -t agent ;;
   shell)    docker exec -it -u agent -w /swarm/me/work "$(cname "$1")" bash ;;
   exec)     n=$1; shift; docker exec -u agent -w /swarm/me/work "$(cname "$n")" "$@" ;;
-  kill|kill-pi) docker exec -u agent "$(cname "$1")" tmux kill-session -t agent && echo "harness stopped in $(cname "$1")" ;;
+  kill|kill-pi|park) docker exec -u agent "$(cname "$1")" tmux kill-session -t agent && echo "harness stopped in $(cname "$1")" ;;
   limits)
     n=$1; mem=$2; cpus=$3; names_of "$n" >/dev/null
     docker update --memory "$mem" --memory-swap "$mem" --cpus "$cpus" "$(cname "$n")" >/dev/null
@@ -143,8 +179,7 @@ case "$cmd" in
       h=$(harness_of "$n")
       if in_tmux "$n"; then
         # the tmux window outlives a dead harness (the launch line ends in `echo '... exited'; sleep`), so check the process itself
-        case "$h" in pi) pat='pgrep -x pi >/dev/null 2>&1 || pgrep -f cli.js >/dev/null 2>&1';; *) pat='pgrep -f swarmkit.run >/dev/null 2>&1';; esac
-        if docker exec -u agent "$(cname "$n")" sh -c "$pat"; then echo "$n: $h running"; else echo "$n: $h NOT running (exited inside tmux; swarmctl kill $n then launch $n)"; fi
+        if docker exec -u agent "$(cname "$n")" python -m swarmkit.processes "$h"; then echo "$n: $h running"; else echo "$n: $h NOT running (exited inside tmux; swarmctl kill $n then launch $n)"; fi
       else echo "$n: $h NOT running"; fi
     done; echo
     nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null || true; free -g 2>/dev/null | head -2 || true

@@ -1,31 +1,30 @@
-# Swarm "{{SWARM}}" — sandbox conventions
+# Swarm "{{SWARM}}" — shared conventions
 
-Room: `{{ROOM}}`. Mission: `/swarm/shared/mission.md` (also in your system prompt). Plan: `BOARD.md`. Numbers: `RESULTS.md`.
-Reproduction: `RUNBOOK.md`. The owner is the agent `owner` (`@owner` in the room, or a DM).
+Room: {{ROOM}}. The operator is the scoped contact `owner`. Mission: mission.md.
+Your rendered prompt describes your execution environment; being in this swarm does not imply owning a Docker sandbox.
 
-## Where you are
-You run inside your own Docker sandbox (hostname = your name, user `agent`, sudo works inside, nothing you install
-leaks out). The sandbox shares the box's GPUs (if any), its network and its RAM with the other sandboxes, under a
-hard RAM/CPU cap of its own.
+## Durable state
 
-- `/swarm/me/` is yours and persists on the host: `work/` for code, checkouts, builds, logs; `memory/` is your
-  OptMem store; `home/` holds your identity (do not touch).
-- `/swarm/shared/` is shared by every sandbox and the host, read/write, same files everywhere. `/swarm/prompts/` is read-only.
-- Toolchain in the image: build-essential, cmake (recent), ninja, ccache (`CCACHE_DIR=/swarm/me/.ccache`), python3,
-  `uv`/`uvx`, node 24, pi, `anet`, git-lfs, tmux, ripgrep, jq, htop; CUDA devel when the box has GPUs.
+BOARD.md records claims, roles and resource windows. RESULTS.md records measurements and raw-log pointers.
+RUNBOOK.md records reproduction. Read current state before acting and after compaction. Claims and results name their host.
+If there is no shared filesystem across PCs, appoint a ledger keeper and publish updates through the room or configured
+storage. A join kit contains snapshots, not a live shared directory. Never store credentials in shared files.
 
-## Resources — the rules
-- RAM caps per sandbox (cgroup; exceeding it OOM-kills your biggest process, not the box): `cat /sys/fs/cgroup/memory.max`;
-  the caps add up to more than the box has, so run `/swarm/shared/ramcheck.sh` before a big load and agree in the room first.
-- CPU: `nproc` shows the whole box; your quota is `$SWARM_CPUS` cores of time; pass `-j$SWARM_CPUS`.
-- GPUs are locked with `/swarm/shared/gpuclaim.sh` (`status`, `<i> take <you> "<why, how long>"`, `<i> release <you>`);
-  take before using, release when done, set `CUDA_VISIBLE_DEVICES` to what you hold. A lock older than 60 min is stale.
-- Host snapshot: `/swarm/shared/status/host.txt` (every 30 s: RAM, GPUs, each sandbox's live usage, caps, locks).
-- Ports (host network, so they are global): `$SWARM_PORT_BASE`..+99 are yours; announce anything you serve.
-- Never kill, renice or interfere with another agent's processes or files; if something hogs the box, say so in `{{ROOM}}`.
-- Model weights download once into `/swarm/shared/models/<org>__<repo>/` (resumable); say on the board which files are complete.
-- Engine builds live in `/swarm/shared/builds/<engine>-<owner>`; only the owner rebuilds; others use read-only or copy.
-- Tools for others go in `/swarm/shared/bin/` or `/swarm/shared/extensions/<name>/` with a README.
-- `BOARD.md`: claims, roles, status — append; never rewrite others' lines. `RESULTS.md`: every number with its command and raw log.
-- Long jobs: your own tmux session inside the sandbox, logs under `/swarm/me/work/` or `/swarm/shared/logs/<job>.log` when
-  others should read them. Your sandbox restarts with the host; tmux sessions do not.
+## Sandbox hosts
+
+When explicitly provided, /swarm/me is your persistent private directory, /swarm/shared is the host's shared mount,
+and /swarm/prompts is read-only. bash runs inside the sandbox; sudo there does not grant host access.
+Read cgroup RAM/CPU caps and status/host.txt before large jobs. Limits are ceilings, not reservations. SWARM_CPUS reflects
+initial allocation; cgroup cpu.max is authoritative after a live limit change. Download shared models once and assign
+one owner per build. Keep long jobs detached with logs and resume commands.
+
+GPU claims are host-local and shared across swarms controlled by the same host state directory. Take with gpuclaim.sh,
+refresh long claims, release promptly, and set CUDA_VISIBLE_DEVICES to the held devices. A stale timer cannot prove a job
+is dead, so it never automatically evicts another owner. Use assigned host-wide port blocks and announce served ports.
+On another PC, use that PC's locks, caps and port assignments. No peer's processes, files, venvs or claims may be changed.
+
+## Evidence and communication
+
+Only send delivers. Findings and warnings go to the room with exact inputs, versions, conditions and raw evidence.
+Keep long material in accessible storage with a pointer and summary. Correct mistakes openly; verify major findings
+independently. Send operator requests to owner and follow the mission's stop/continue policy.

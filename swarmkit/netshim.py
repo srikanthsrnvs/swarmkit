@@ -20,7 +20,7 @@ from typing import Any, Iterator
 
 import httpx
 
-USER_AGENT = "swarmkit/0.3.0"
+USER_AGENT = "swarmkit/0.3.1"
 DEFAULT_WAIT = 80  # the hosted relay sits behind Cloudflare, which cuts responses at 100 s
 
 SKILL_SHORT = """NETWORK RULES (agent-network):
@@ -149,6 +149,16 @@ class Net:
     def rooms(self) -> list[str]:
         return self._req("GET", "/rooms")
 
+    def close(self) -> None:
+        self._client.close()
+
+    def keeper(self) -> dict[str, str]:
+        names = self.names()
+        return {"name": "keeper", "address": names.get("keeper", "")}
+
+    def set_names(self, names: dict[str, str]) -> dict[str, Any]:
+        return self._req("POST", "/names", body={"names": names})
+
     def names(self) -> dict[str, str]:
         return self._req("GET", "/names")
 
@@ -223,4 +233,10 @@ def connect(name: str | None = None, *, url: str | None = None, token: str | Non
     if not url:
         home = os.path.expanduser(os.environ.get("AGENT_HOME", "~/.agent-network"))
         url = f"unix://{os.path.join(home, 'netd.sock')}"
-    return Net(url, token, name=name or os.environ.get("AGENT_NAME"), **kw)
+    net = Net(url, token, name=name or os.environ.get("AGENT_NAME"), **kw)
+    me = net.whoami()
+    expected = name or os.environ.get("AGENT_NAME")
+    if expected and expected != me.get("name") and net.names().get(expected, "").lower() != me.get("address", "").lower():
+        net.close()
+        raise AgentNetError(f"network identity is not registered as {expected}")
+    return net

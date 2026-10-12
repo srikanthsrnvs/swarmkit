@@ -1,0 +1,27 @@
+name: Portable swarm tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build the pinned public protocol
+        run: |
+          git init agent-network
+          git -C agent-network remote add origin https://github.com/srikanthsrnvs/agent-network
+          git -C agent-network fetch --depth 1 origin "$(cat agent-network.ref)"
+          git -C agent-network checkout --detach FETCH_HEAD
+          cd agent-network && npm ci && npm run build
+      - run: python -m pip install -e . pytest
+      - run: TEST_AGENT_NETWORK="$PWD/agent-network" python -m pytest tests -q
+      - name: Check shell entry points
+        run: shellcheck bin/*.sh bin/swarm-* cloud/codex/setup.sh cloud/codex/bin/net cloud/claude/sc

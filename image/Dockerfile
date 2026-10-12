@@ -52,6 +52,7 @@ RUN npm ci --no-audit --no-fund && npm run build \
 # package is installed from the staged tag when that tag ships python/ (v0.3.0+), else the runner's built-in client is used
 COPY --chown=agent:agent pyproject.toml README.md /opt/swarmkit/
 COPY --chown=agent:agent swarmkit /opt/swarmkit/swarmkit
+COPY --chown=agent:agent prompts/prompt.template.md /opt/swarmkit/prompts/prompt.template.md
 RUN cd /opt/swarmkit && uv venv -q .venv && uv pip install -q -p .venv/bin/python -e . \
     && { [ -d /opt/agent-network/python ] && uv pip install -q -p .venv/bin/python -e /opt/agent-network/python || true; } \
     && .venv/bin/python -c 'import agents, swarmkit; print("openai-agents", agents.__version__, "swarmkit", swarmkit.__version__)' \
@@ -67,3 +68,7 @@ ENV PATH=/usr/local/cuda/bin:/opt/swarmkit/.venv/bin:/home/agent/.local/bin:$PAT
     CCACHE_DIR=/swarm/me/.ccache
 WORKDIR /swarm/me
 CMD ["sleep", "infinity"]
+
+ARG SWARMKIT_FINGERPRINT=unknown
+ARG AGENT_NETWORK_REF=unknown
+LABEL org.swarmkit.source=${SWARMKIT_FINGERPRINT} org.swarmkit.agent-network=${AGENT_NETWORK_REF}

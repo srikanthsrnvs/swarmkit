@@ -33,7 +33,7 @@ NET_IMPL = "anet" if anet_pkg else "swarmkit.netshim"
 
 from swarmkit.prompt import render_prompt
 
-HARNESS_NOTE = """HOW YOU RUN (this harness): you are an OpenAI Agents SDK agent in your sandbox. Each [network] message is one
+HARNESS_NOTE = """HOW YOU RUN (this harness): you are an OpenAI Agents SDK agent in the execution environment described above. Each [network] message is one
 turn: read it, use your tools, and when you have something to say call send; then end the turn. Your tools are exactly:
 send, join, leave, members{bash}. There is no separate read/write/edit/grep tool{bash_hint}. Never report a number you did
 not measure with a tool call in this turn."""
@@ -52,8 +52,19 @@ class Log:
         self.path = path
 
     def write(self, kind: str, **fields) -> None:
+        def redact(value):
+            if isinstance(value, str):
+                for key, secret in os.environ.items():
+                    if len(secret) >= 8 and any(word in key.upper() for word in ("TOKEN", "API_KEY", "PRIVATE_KEY", "PASSWORD")):
+                        value = value.replace(secret, "[redacted]")
+                return value
+            if isinstance(value, dict): return {k: redact(v) for k, v in value.items()}
+            if isinstance(value, list): return [redact(v) for v in value]
+            return value
+        fields = redact(fields)
         rec = {"ts": now(), "kind": kind, **fields}
         with self.path.open("a") as f:
+            self.path.chmod(0o600)
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         sys.stderr.write(f"[{rec['ts']}] {kind} {json.dumps({k: v for k, v in fields.items() if k != 'items'}, ensure_ascii=False)[:400]}\n")
         sys.stderr.flush()
@@ -80,12 +91,19 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--heartbeat-minutes", type=float, default=float(os.environ.get("AGENT_HEARTBEAT_MINUTES", 20)))
     p.add_argument("--wait", type=int, default=80, help="inbox long-poll seconds per request (≤80 behind Cloudflare)")
     p.add_argument("--announce", default=None, help="a first room post sent before the loop (no model turn)")
+    p.add_argument("--max-total-tokens", type=int, default=0, help="park after logged input+output tokens reach this ceiling (can overshoot by one turn)")
     p.add_argument("--max-messages", type=int, default=0, help="exit after this many model turns (smoke tests); 0 = forever")
     p.add_argument("--idle-exit", type=float, default=0, help="exit when nothing arrived for this many seconds (smoke tests); 0 = never")
+    p.add_argument("--execution", choices=["sandbox", "local", "remote", "cloud"], default="sandbox" if Path("/swarm/me").is_dir() else "local")
+    p.add_argument("--allow-host-bash", action="store_true", help="explicitly allow the bash tool outside a container")
+    p.add_argument("--session-limit", type=int, default=200, help="recent session items supplied to the model; durable SQLite history is retained")
     p.add_argument("--no-bash", action="store_true", help="do not give the agent the bash tool (its own sandbox's shell)")
     p.add_argument("--skip-keeper", action="store_true", default=True, help="log keeper confirmations without a model turn (default)")
     p.add_argument("--turn-on-keeper", dest="skip_keeper", action="store_false")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.session_limit < 1 or args.wait < 1 or args.max_turns < 1 or args.heartbeat_minutes < 0:
+        p.error("session-limit, wait and max-turns must be positive; heartbeat-minutes must be nonnegative")
+    return args
 
 
 def connect(name: str, url: str | None, token_file: str | None):
@@ -103,7 +121,11 @@ def connect(name: str, url: str | None, token_file: str | None):
     token = token or os.environ.get("AGENTNET_TOKEN")
     if anet_pkg is not None and url and not url.startswith("unix://") and token:
         NET_IMPL = "anet"
-        return anet_pkg.connect(name, url=url, token=token)
+        net = anet_pkg.connect(url=url, token=token)
+        if name != net.name and net.names().get(name, "").lower() != (net.address or "").lower():
+            net.close()
+            raise ValueError(f"relay identity is not registered as {name}")
+        return net
     NET_IMPL = "swarmkit.netshim"
     return netshim.connect(name, url=url, token=token)
 
@@ -141,10 +163,16 @@ def build_agent(args: argparse.Namespace, net, instructions: str):
     client = AsyncOpenAI(base_url=args.base_url, api_key=api_key)
     model = OpenAIChatCompletionsModel(model=args.model, openai_client=client)
     tools = list(net.tools())
-    if not args.no_bash:
+    if not args.no_bash and (args.execution == "sandbox" or args.allow_host_bash):
         from swarmkit.tools import bash_tool
         tools.append(bash_tool())
     return Agent(name=args.name, instructions=instructions, tools=tools, model=model)
+
+
+def complete_history(history, new_input):
+    """A limited SQLite window can start with an orphan tool result; begin at a user turn."""
+    start = next((i for i, item in enumerate(history) if isinstance(item, dict) and item.get("role") == "user"), len(history))
+    return history[start:] + new_input
 
 
 def summarize_items(result) -> list[dict]:
@@ -167,15 +195,19 @@ def summarize_items(result) -> list[dict]:
     return out
 
 
-async def run_turn(agent, session, text: str, max_turns: int, log: Log, kind: str) -> None:
-    from agents import Runner
+async def run_turn(agent, session, text: str, max_turns: int, log: Log, kind: str, session_limit: int = 200) -> int | None:
+    from agents import Runner, RunConfig, SessionSettings
 
     t0 = time.time()
     try:
-        result = await Runner.run(agent, text, session=session, max_turns=max_turns)
-        log.write("turn", trigger=kind, seconds=round(time.time() - t0, 1), final=str(result.final_output)[:1000], items=summarize_items(result))
+        result = await Runner.run(agent, text, session=session, max_turns=max_turns,
+            run_config=RunConfig(session_settings=SessionSettings(limit=session_limit), session_input_callback=complete_history))
+        usage = result.context_wrapper.usage
+        log.write("turn", trigger=kind, seconds=round(time.time() - t0, 1), final=str(result.final_output)[:1000], items=summarize_items(result), usage={k: getattr(result.context_wrapper.usage, k) for k in ("requests", "input_tokens", "output_tokens", "total_tokens")} | {"cached_input_tokens": getattr(usage.input_tokens_details, "cached_tokens", 0)})
+        return usage.total_tokens
     except Exception as e:  # a failed turn must not kill the loop; the message is already in the session
         log.write("error", trigger=kind, seconds=round(time.time() - t0, 1), error=f"{type(e).__name__}: {e}"[:800])
+        return None
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -187,60 +219,99 @@ async def main_async(args: argparse.Namespace) -> int:
     log = Log(home / "net.jsonl")
 
     lane = Path(args.lane_file).read_text() if args.lane_file else (args.lane or "GENERALIST: read the shared board, take the most valuable unclaimed task, claim it in the room, do it.")
+    args.no_bash = args.no_bash or (args.execution != "sandbox" and not args.allow_host_bash)
     harness = HARNESS_NOTE.format(bash="" if args.no_bash else ", bash", bash_hint="" if args.no_bash else " — bash does all of that")
     instructions = render_prompt(name=args.name, lane=lane, room=args.room, template=args.template, mission_file=args.mission_file,
-                                 swarm_dir=swarm_dir) + "\n\n" + harness + "\n\n" + anet.SKILL_SHORT
+                                 swarm_dir=swarm_dir, execution=args.execution) + "\n\n" + harness + "\n\n" + anet.SKILL_SHORT
 
     net = connect(args.name, args.relay, args.token_file)
-    me = net.whoami()
-    log.write("start", net=NET_IMPL, whoami={k: me.get(k) for k in ("name", "address", "env")} if isinstance(me, dict) else str(me),
-              model=args.model, base_url=args.base_url, room=args.room, home=str(home))
-    if not args.no_join:
-        try:
-            log.write("join", room=args.room, result=net.join(args.room))
-        except Exception as e:
-            log.write("error", trigger="join", error=str(e)[:400])
-    if args.announce:
-        log.write("send", target=args.room, text=args.announce, result=net.send(args.room, args.announce))
+    try:
+        me = net.whoami()
+        log.write("start", net=NET_IMPL, whoami={k: me.get(k) for k in ("name", "address", "env")} if isinstance(me, dict) else str(me),
+                  model=args.model, base_url=args.base_url, room=args.room, home=str(home))
+        if not args.no_join:
+            try:
+                joined = net.join(args.room, wait=60)
+                log.write("join", room=args.room, result=joined)
+                if not joined.get("ok"):
+                    raise RuntimeError("room membership not confirmed; restart after checking the keeper")
+            except Exception as e:
+                log.write("error", trigger="join", error=str(e)[:400])
+                return 1
+        if args.announce:
+            log.write("send", target=args.room, text=args.announce, result=net.send(args.room, args.announce))
 
-    agent = build_agent(args, net, instructions)
-    session = SQLiteSession(args.name, str(home / "sessions.db"))
+        agent = build_agent(args, net, instructions)
+        session = SQLiteSession(args.name, str(home / "sessions.db"))
 
-    turns = 0
-    last_activity = time.time()
-    last_heartbeat = time.time()
-    heartbeat_s = args.heartbeat_minutes * 60 if args.heartbeat_minutes > 0 else 0
-    while True:
-        wait = args.wait
-        if heartbeat_s:
-            wait = max(1, min(wait, int(heartbeat_s - (time.time() - max(last_activity, last_heartbeat))) + 1))
-        if args.idle_exit:
-            wait = max(1, min(wait, int(args.idle_exit - (time.time() - last_activity)) + 1))
-        try:
-            batch = await asyncio.to_thread(poll_inbox, net, wait)
-        except Exception as e:
-            log.write("error", trigger="inbox", error=str(e)[:400])
-            await asyncio.sleep(5)
-            continue
-        for msg in batch:
-            last_activity = time.time()
-            wire = wire_of(msg)
-            log.write("recv", **{("msg_ts" if k == "ts" else k): v for k, v in wire.items()})
-            sender = (getattr(msg, "sender", None) or getattr(msg, "from_", None) or "").lower()
-            if args.skip_keeper and sender == "keeper":
+        turns = 0
+        total_tokens = 0
+        if args.max_total_tokens:
+            for line in log.path.read_text().splitlines() if log.path.exists() else []:
+                try: total_tokens += json.loads(line).get("usage", {}).get("total_tokens", 0)
+                except ValueError: pass
+            if total_tokens >= args.max_total_tokens:
+                log.write("exit", reason="token ceiling already reached"); return 0
+        last_activity = time.time()
+        last_heartbeat = time.time()
+        pending_file = home / "pending.json"
+        pending = json.loads(pending_file.read_text()) if pending_file.exists() else []
+        def save_pending():
+            temp = pending_file.with_suffix(".tmp")
+            temp.write_text(json.dumps(pending) + "\n"); temp.chmod(0o600); temp.replace(pending_file)
+        heartbeat_s = args.heartbeat_minutes * 60 if args.heartbeat_minutes > 0 else 0
+        while True:
+            wait = args.wait
+            if heartbeat_s:
+                wait = max(1, min(wait, int(heartbeat_s - (time.time() - max(last_activity, last_heartbeat))) + 1))
+            if args.idle_exit:
+                wait = max(1, min(wait, int(args.idle_exit - (time.time() - last_activity)) + 1))
+            try:
+                if pending:
+                    batch = [netshim.Message.from_wire(item) for item in pending]
+                else:
+                    batch = await asyncio.to_thread(poll_inbox, net, wait)
+                    pending.extend(wire_of(msg) for msg in batch)
+                    save_pending()
+            except Exception as e:
+                log.write("error", trigger="inbox", error=str(e)[:400])
+                await asyncio.sleep(5)
                 continue
-            await run_turn(agent, session, msg.as_input(), args.max_turns, log, "message")
-            turns += 1
-            if args.max_messages and turns >= args.max_messages:
-                log.write("exit", reason=f"max-messages {args.max_messages} reached")
+            for msg in batch:
+                last_activity = time.time()
+                wire = wire_of(msg)
+                log.write("recv", **{("msg_ts" if k == "ts" else k): v for k, v in wire.items()})
+                sender = (getattr(msg, "sender", None) or getattr(msg, "from_", None) or "").lower()
+                if args.skip_keeper and sender == "keeper":
+                    pending.pop(0); save_pending()
+                    continue
+                used = await run_turn(agent, session, msg.as_input(), args.max_turns, log, "message", args.session_limit)
+                if used is None:
+                    log.write("exit", reason="turn failed; pending message retained for recovery"); return 1
+                total_tokens += used
+                pending.pop(0); save_pending()
+                last_activity = time.time()
+                turns += 1
+                if args.max_total_tokens and total_tokens >= args.max_total_tokens:
+                    log.write("exit", reason="token ceiling reached"); return 0
+                if args.max_messages and turns >= args.max_messages:
+                    log.write("exit", reason=f"max-messages {args.max_messages} reached")
+                    return 0
+            idle = time.time() - last_activity
+            if heartbeat_s and idle >= heartbeat_s and time.time() - last_heartbeat >= heartbeat_s:
+                last_heartbeat = time.time()
+                used = await run_turn(agent, session, HEARTBEAT_TEXT.format(minutes=int(idle // 60)), args.max_turns, log, "heartbeat", args.session_limit)
+                if used is None:
+                    log.write("exit", reason="heartbeat turn failed"); return 1
+                total_tokens += used
+                turns += 1
+                if (args.max_messages and turns >= args.max_messages) or (args.max_total_tokens and total_tokens >= args.max_total_tokens):
+                    log.write("exit", reason="turn/token ceiling reached"); return 0
+            if args.idle_exit and idle >= args.idle_exit:
+                log.write("exit", reason=f"idle for {int(idle)} s")
                 return 0
-        idle = time.time() - last_activity
-        if heartbeat_s and idle >= heartbeat_s and time.time() - last_heartbeat >= heartbeat_s:
-            last_heartbeat = time.time()
-            await run_turn(agent, session, HEARTBEAT_TEXT.format(minutes=int(idle // 60)), args.max_turns, log, "heartbeat")
-        if args.idle_exit and idle >= args.idle_exit:
-            log.write("exit", reason=f"idle for {int(idle)} s")
-            return 0
+    finally:
+        net.close()
 
 
 def _take_one(it):

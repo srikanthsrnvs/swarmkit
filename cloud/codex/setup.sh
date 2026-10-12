@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
-# Setup script for a cloud environment (Codex or similar) running one swarm agent.
-# Needs: AGENTNET_URL (variable) and AGENTNET_TOKEN (secret) for the relay — see cloud/README.md.
-# Optional: SWARM_GATEWAY_HOST (variable) + SWARM_GATEWAY_TOKEN (secret) for a shell in a sandbox on the box (gateway/README.md).
-# Installs agent-network at the pinned tag next to this repo so cloud/codex/bin/net (= anet in HTTPS mode) works.
+# Bootstrap a portable network connection; no model is launched and no inbox is consumed.
 set -euo pipefail
-: "${AGENTNET_URL:?set the AGENTNET_URL variable}" "${AGENTNET_TOKEN:?set the AGENTNET_TOKEN secret}"
 HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(cd "$HERE/../.." && pwd)
-TAG=${AGENT_NETWORK_TAG:-$(cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}
-AN=${AGENT_NETWORK:-$KIT/../agent-network}
-command -v node >/dev/null || { echo "node 22+ is required for anet" >&2; exit 1; }
-if [ ! -f "$AN/packages/cli/bin/anet.mjs" ]; then
-  git clone -q --depth 1 --branch "$TAG" https://github.com/srikanthsrnvs/agent-network "$AN"
-  (cd "$AN" && npm ci --no-audit --no-fund >/dev/null && npm run build >/dev/null)
+REF=${AGENT_NETWORK_TAG:-$(cat "$KIT/agent-network.ref")}
+AN=${AGENT_NETWORK:-$KIT/.cache/agent-network-$REF}
+if [ -n "${AGENTNET_URL:-}" ]; then
+  : "${AGENTNET_TOKEN:?supply AGENTNET_TOKEN through the environment secret store}"
+  command -v node >/dev/null || { echo "Node 22+ is required" >&2; exit 1; }
+  if [ ! -f "$AN/packages/cli/bin/anet.mjs" ]; then
+    mkdir -p "$(dirname "$AN")"; git init -q "$AN"
+    git -C "$AN" remote add origin https://github.com/srikanthsrnvs/agent-network
+    git -C "$AN" fetch -q --depth 1 origin "$REF"; git -C "$AN" checkout -q --detach FETCH_HEAD
+    (cd "$AN" && npm ci --no-audit --no-fund >/dev/null && npm run build >/dev/null)
+  fi
+  export AGENT_NETWORK="$AN"
+  if [ -n "${SWARM_JOIN_KIT:-}" ]; then
+    "$HERE/bin/net" contacts --file "$SWARM_JOIN_KIT/names.json" --no-inbox >/dev/null
+  fi
+  "$HERE/bin/net" whoami --no-inbox
+elif [ -z "${SWARM_GATEWAY_HOST:-}" ]; then
+  echo "set AGENTNET_URL/token (relay), or SWARM_GATEWAY_HOST/token (sandbox gateway)" >&2; exit 1
 fi
-chmod +x "$HERE/bin/"*
-echo "network: $("$HERE/bin/net" whoami)"
 if [ -n "${SWARM_GATEWAY_HOST:-}" ]; then
-  command -v python3 >/dev/null || { echo "python3 is required by cloud/codex/bin/sc" >&2; exit 1; }
-  "$HERE/bin/sc" 'echo "sandbox reachable: $(hostname) as $(whoami); GPUs: $(nvidia-smi -L 2>/dev/null | wc -l)"'
+  "$HERE/bin/sc" 'printf "sandbox reachable: "; hostname'
+fi
+if [ -n "${SWARM_JOIN_KIT:-}" ]; then
+  [ -f "$SWARM_JOIN_KIT/PROMPT.md" ] || { echo "join kit has no PROMPT.md" >&2; exit 1; }
+  echo "standing prompt: $SWARM_JOIN_KIT/PROMPT.md"
 fi

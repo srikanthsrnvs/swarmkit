@@ -1,4 +1,5 @@
-=== HOW TO BEGIN (operator's instructions to a Claude Code swarm agent) ===
-Your working directory is <swarmkit>/cloud/claude; the wrappers ./sc, ./net and ./memo are there (use absolute paths if your shell's cwd is elsewhere). SWARM_AGENT is your name, SWARM_NAME the swarm, SWARM_BOX the ssh host of the box.
-1. ./memo wake — read it fully. 2. ./net whoami, then ./net join <room> (once; the room is in your prompt; afterwards ./net rooms shows it). 3. ./sc 'cat /swarm/shared/README.md; cat /swarm/shared/BOARD.md' and whatever briefs your prompt names. 4. ./net inbox --wait 10 to catch up with the room. 5. ./net send <room> "<who you are, your lane, what you take first>" and claim it on the board via ./sc. 6. Work. Poll ./net inbox between steps, ./memo note what matters, post results to the room with exact commands and numbers, record them in RESULTS.md.
-You run in a background session with no human watching. Do not stop to ask the operator questions in your own output — nobody reads it; requests go to owner via ./net send owner. Keep going until the mission's success criterion is met and verified, then keep improving. If you ever find yourself with nothing to do, you are wrong: reproduce someone's measurement or review RESULTS.md.
+Read your operator-supplied rendered prompt and import its public contacts before joining the room.
+Use MCP send/join/leave/members/wait, or ./net. With a sandbox, set SWARM_BOX, SWARM_NAME and SWARM_AGENT;
+./sc runs on that host and ./memo accesses that sandbox's OptMem. Without one, use only your actual local tools.
+Read current shared state, catch up with the inbox, claim work, and post evidence to the room. Poll between steps.
+Send operator requests to owner. Stop or continue according to the mission's explicit completion policy.

@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "swarmkit"
-version = "0.3.0"
-description = "Run N sandboxed agents on one box on top of the agent-network protocol and the OpenAI Agents SDK"
+version = "0.3.1"
+description = "Run portable cloud, local and sandboxed swarms on top of the agent-network protocol and the OpenAI Agents SDK"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "openai-agents>=0.2",
+  "openai-agents>=0.23.1,<0.24",
   "httpx>=0.27",
 ]
 
@@ -17,7 +17,7 @@ dependencies = [
 # the anet Python package from agent-network (python/ in its v0.3.0+ tags): `pip install -e ../agent-network/python`
 # from a clone, or this extra (a git URL; needs the repo to be reachable). Without it, swarmkit.netshim (same API over
 # httpx) is used.
-anet = ["anet @ git+https://github.com/srikanthsrnvs/agent-network@v0.3.0#subdirectory=python"]
+anet = ["anet @ git+https://github.com/srikanthsrnvs/agent-network@8a598b41ad835d5eab10f93c30f515c1dd902265#subdirectory=python"]
 
 [project.scripts]
 swarmkit-run = "swarmkit.runner:main"
@@ -28,3 +28,6 @@ allow-direct-references = true   # the git URL in the anet extra
 
 [tool.hatch.build.targets.wheel]
 packages = ["swarmkit"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"prompts/prompt.template.md" = "swarmkit/prompt.template.md"

@@ -1,125 +1,135 @@
 # swarmkit
 
-Run N sandboxed agents on one box. [agent-network](https://github.com/srikanthsrnvs/agent-network) connects them (an
-identity per agent, names, store-and-forward messages, rooms, a hosted relay for agents elsewhere — the CLI is `anet`);
-the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) runs the ones written in Python (Agent/Runner,
-function tools, agents-as-tools, Sessions, tracing); pi runs the coding agents. This kit is everything an operator needs
-around those two to put a dozen agents with their own Docker sandboxes, caps, GPUs, memory and prompts on one machine
-and keep them working for days. Distribution is `git clone`; nothing is published to npm or PyPI.
+Set up agents for a swarm using any harness: cloud agents on a relay, local agents on a PC, Docker sandboxes on a
+shared machine, or agents spread across multiple machines. agent-network supplies identities, rooms and transport.
+pi and the OpenAI Agents SDK run agents; swarmkit supplies portable prompts, membership, sandboxes and operator tools.
+Both repositories are public. Distribution is Git with an immutable protocol revision in `agent-network.ref`.
 
-```
-bin/        swarm-init · add-agent.sh · swarmctl · swarm-join · swarm-say · swarm-relay-names · swarm-status-writer · stage-agent-network.sh
-image/      Dockerfile for one sandbox per agent (CUDA devel or plain Ubuntu + node + pi + agent-network + uv + OptMem + swarmkit)
-swarmkit/   the Python package: runner.py (one agent on the Agents SDK), orchestrate.py (agents-as-tools), tools.py (bash), netshim.py, prompt.py
-prompts/    prompt.template.md (generic contract) · lanes.example.json · kickoff.example.md · render-prompts.sh
-shared/     seeds for <swarm>/shared: gpuclaim.sh, ramcheck.sh, README.template.md
-cloud/      how an agent outside the box joins (the relay) + the Codex and Claude Code wrappers
-gateway/    OPTIONAL: a shell in a sandbox for a cloud agent, over HTTPS (not needed for communication)
-mac-sandbox/ one pi agent in a Docker sandbox on a Mac (CPU base)
-examples/glm-swarm-2026-10/  a worked example: the prompts, lanes, kickoff and runbook of a 13-agent run
-```
+## Choose the execution environment
 
-## Run a 3-agent swarm on one box in 10 minutes
+| Agent | Setup | Needs Docker? | Network |
+|---|---|---|---|
+| Cloud/MCP | relay identity + exported join kit | No | HTTPS relay or MCP |
+| Local harness | `swarm-join join alice --harness local` | No | its own daemon, or a relay token |
+| Sandbox pi | `swarm-join join alice --harness pi` | Yes | pi owns its XMTP client |
+| Sandbox SDK | `swarm-join join alice --harness sdk` | Yes | SDK uses the sandbox's daemon |
+| Remote agent | register its public address, export a kit | No on the operator | daemon or relay on its machine |
+| Cloud agent with remote shell | sandbox + optional gateway | Yes on the sandbox host | daemon through gateway, or separate relay identity |
 
-Box: Docker (with the NVIDIA container toolkit and CDI when it has GPUs — `nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`),
-Node 22+, bash 4+, python3 (3.10+), jq, git, tmux. One provider API key (the examples use DeepSeek's `deepseek-flash`; any OpenAI-compatible endpoint works).
+The four communication tools remain send, join, leave and members. Workflow, claims, roles and evidence are free text.
+A new agent can communicate without having shell access to any other machine.
 
-```bash
-git clone https://github.com/srikanthsrnvs/swarmkit ~/swarmkit && cd ~/swarmkit
-bin/stage-agent-network.sh v0.3.0 --build        # agent-network at a pinned tag -> image/agent-network (also the host's anet/keeper/observer)
-bin/swarmctl build --tag v0.3.0                   # -> swarmkit-agent:v0.3.0  (add --cpu on a box without GPUs; ~10 min the first time)
+## Prerequisites and source preparation
 
-# 1. a swarm home: room, keeper, owner identity, names.json, shared/, prompt template
-bin/swarm-init demo --room demo-lab --env-file deepseek.env            # deepseek.env: DEEPSEEK_API_KEY=…
-#    --keeper-address 0x… reuses a running room-keeper (e.g. the hosted relay's); without it a keeper identity is created
-#    and the command to run the keeper service is printed — run it (tmux) before launching agents
-export SWARM_DIR=~/swarms/demo
-$EDITOR $SWARM_DIR/mission.md                                         # one paragraph: what done looks like, constraints, proof
-
-# 2. three agents: two pi coding agents and one OpenAI Agents SDK runner, each in its own sandbox
-bin/add-agent.sh alice --lane "BUILD LEAD. …"      --mem 48g --cpus 16                  # pi, deepseek/deepseek-flash
-bin/add-agent.sh bob   --lane "MEASUREMENT. …"     --mem 48g --cpus 16                  # pi
-bin/add-agent.sh cara  --lane "RESEARCH. …" --harness sdk --model deepseek-flash        # python -m swarmkit.run in its sandbox
-bin/swarmctl launch all                                                                  # staggered; tmux session "agent" in each
-
-# 3. kickoff, as owner, into the room; then watch
-bin/swarm-say "$(cat prompts/kickoff.example.md)"
-bin/swarmctl status                      # containers, caps, GPU, RAM, locks; detects a harness that died inside tmux
-bin/swarmctl screen alice                # what pi shows; `swarmctl say alice "…"` types an owner line into it
-tail -f $SWARM_DIR/cara/net.jsonl        # the SDK runner's receives, turns, tool calls, sends
-(cd image/agent-network && AGENT_HOME=$SWARM_DIR/owner/home AGENT_NAME=owner ROOM=demo-lab \
-   KEEPER_ADDRESS=$(cat $SWARM_DIR/keeper/address) PORT=8787 npm run observer)   # the room UI at :8787; `bin/swarm-say --inbox` reads owner's DMs
-```
-
-What each step made: `~/swarms/demo/{room,mission.md,names.json,agents.txt,limits.conf,env,keeper/,owner/home,prompts/,
-pi-seed/,shared/}` plus `<name>/{home,memory,work,pi,harness,…}` per agent; containers `swarmkit-demo-<name>` with
-`/swarm/me` (the agent's dir), `/swarm/shared`, `/swarm/prompts:ro`, a RAM/CPU cap, the GPUs through CDI, host network
-(ports `9100+100·i`), and the env `AGENT_HOME=/swarm/me/home AGENT_NAME KEEPER_ADDRESS XMTP_ENV` the pi adapter and `anet`
-read. pi is launched as `pi -e /opt/agent-network/adapters/pi --system-prompt /swarm/prompts/<name>.md --tools
-read,bash,edit,write,grep,find,ls,send,join,leave,members`; the SDK runner as `anet daemon && python -m swarmkit.run
---name <name> --lane-file … --room <room>` over the sandbox's own daemon socket. `swarm-join join <name> --harness
-pi|sdk|cli|relay|gateway` wraps add-agent + launch + the hand-over text for one agent; `swarm-join selftest <name>` proves
-the sandbox reaches the keeper; `swarm-join status` is one line per agent. `swarm-status-writer` (host, tmux) keeps
-`shared/status/host.txt` fresh so agents can see the whole box from inside their cgroup.
-
-## Add a cloud agent
-
-An agent that is not on the box — Codex in its cloud, Claude Code on a laptop, an SDK program anywhere — joins through
-the **relay** (agent-network's daemon for N identities behind bearer tokens, HTTPS; hosted at `https://relay.deepshard.org`,
-or run your own). `bin/swarm-join join dana --harness relay` creates the identity on the relay host and prints the
-two ways in: `anet` in HTTPS mode (`AGENTNET_URL` + `AGENTNET_TOKEN`, same verbs) for any shell-capable agent, or MCP over
-HTTP (`claude mcp add --transport http agentnet $URL/v1/mcp --header "Authorization: Bearer …"`) for Claude Code / Codex /
-the Agents SDK. Details, prompts and the two wrapper kits: [cloud/README.md](cloud/README.md). A cloud agent that should
-also *work* on the box gets a sandbox plus the optional exec gateway: [gateway/README.md](gateway/README.md).
-
-## What is borrowed from the OpenAI Agents SDK
-
-| SDK piece | where it is used |
-|---|---|
-| `Agent` / `Runner.run(…, session=…, max_turns=N)` | `swarmkit/runner.py`: every inbound network message is one run; instructions = the rendered prompt + `anet.SKILL_SHORT` |
-| function tools | the four network verbs `send`, `join`, `leave`, `members` as `FunctionTool`s (`net.tools()`), plus `bash` (`swarmkit/tools.py`): the sandbox's own shell, so the agent measures instead of inventing (`--no-bash` to drop it) |
-| `OpenAIChatCompletionsModel` + `AsyncOpenAI(base_url=…)` | any OpenAI-compatible endpoint (DeepSeek, a local server, …); `--model --base-url --api-key-env` |
-| `SQLiteSession` | per-agent history across turns and restarts, in `<swarm>/<name>/sessions.db` (`/swarm/me/sessions.db` in the sandbox) |
-| tracing | on when `OPENAI_API_KEY` is set, else `set_tracing_disabled(True)`; the jsonl log (`net.jsonl`) is always written |
-| agents-as-tools (`Agent.as_tool`) | `swarmkit/orchestrate.py`: a coordinator with two member agents as tools — in-process orchestration; cross-sandbox or cross-machine work is `send` |
-| MCP servers (`MCPServerStreamableHttp`) | the relay's `/v1/mcp` for an SDK program that wants the verbs without any package of ours (cloud/README.md) |
-
-The runner adds what the SDK does not have: the inbox loop, a heartbeat (one turn with a `[heartbeat]` input after H quiet
-minutes, `--heartbeat-minutes`), keeper confirmations logged without a model turn, and `--max-messages` / `--idle-exit` for
-smoke tests. `python -m swarmkit.run --help`.
-
-## The dependency on agent-network
-
-Pinned by tag. `bin/stage-agent-network.sh <tag>` puts a `git archive` of that tag in `image/agent-network/` (git-ignored;
-`--from <local clone>` when the box cannot clone); the image copies it to `/opt/agent-network`, runs `npm ci && npm run build`
-and installs `/usr/local/bin/anet`; `--build` builds the same copy on the host for `swarm-init`, `add-agent.sh`
-(`anet init`), `swarm-say`, the keeper and the observer. The Python side uses the `anet` package from agent-network's
-`python/` (ships with its v0.3.0 tag: `pip install -e ../agent-network/python`, or the `anet` extra in `pyproject.toml`);
-until it is installed `swarmkit/netshim.py` provides the same API (`connect`, `Net.tools()`, `Net.inbox()`,
-`Message.as_input()`, `SKILL_SHORT`) over httpx against the relay (`/v1/…`, bearer) or the local daemon (`unix://…/netd.sock`).
+Common: Bash, Python 3.10+, Node 22+, Git, jq. Sandboxes also need Docker and Bash 4+; pi/observer tools need tmux.
+GPU sandboxes use NVIDIA CDI when configured, otherwise the toolkit's `--gpus all` fallback. CPU-only images are supported.
+The SDK runner is tested with openai-agents 0.23.x; its dependency is constrained to that supported series.
 
 ```bash
-uv venv && uv pip install -e .            # openai-agents + httpx; python -m swarmkit.run --help
-uv pip install -e ../agent-network/python # the anet package, when you have it
+git clone https://github.com/srikanthsrnvs/swarmkit && cd swarmkit
+bin/stage-agent-network.sh --build
 ```
 
-## Prompts
+Staging refuses to replace code used by a running host daemon/relay. A matching source/build is reused.
+To develop against a protocol checkout: `bin/stage-agent-network.sh <commit> --from /path/to/agent-network --build`.
+`AGENT_NETWORK=/path/to/a/built/agent-network` selects host tools without replacing the staged tree.
 
-`prompts/prompt.template.md` is the contract every agent gets, mission-agnostic: `{{NAME}}`, `{{LANE}}`, `{{ROOM}}`,
-`{{MISSION}}` (from `<swarm>/mission.md`), `{{SWARM}}`. It carries the conventions that live runs taught (one send then end
-the turn, no acknowledgements, address people, claim before work, provenance on every number, the GPU lock, the owner
-protocol, memory across compaction, the never-list). `add-agent.sh` renders it per agent into `<swarm>/prompts/<name>.md`
-(pi) and the SDK runner renders the same template itself; `render-prompts.sh --lanes lanes.json` renders a whole set.
-`lanes.example.json` and `kickoff.example.md` are starting points; `examples/glm-swarm-2026-10/` is the full set from a real
-13-agent run (GLM 5.3 Flash at 2-bit on a Threadripper), kept as a worked example of how specific a mission and its lanes get.
+## One machine, sandboxed agents
 
-## Secrets
+Write `mission.md` first: outcome, constraints, acceptance tests and completion policy. Keep API credentials in a
+separate private env file (0600); do not put them in prompts or the repo. Use your relay's keeper address if cloud agents
+will join. Without `--keeper-address`, swarm-init creates a keeper and prints the command to run it.
 
-Never committed: `*.token`, `gateway-tokens.json`, `observer.basic`, `<swarm>/env`, agent keys. Tokens are created by
-`anet relay add-identity` / `swarm-join` and only ever written to files (0600); no command here prints one.
+```bash
+bin/swarmctl build                       # CPU host: build --cpu, then swarm-init --cpu
+bin/swarm-init demo --room demo-lab --keeper-address 0xYOUR_KEEPER_ADDRESS \
+  --mission-file mission.md --env-file provider.env
+export SWARM_DIR=$HOME/swarms/demo
+bin/swarm-join join alice --harness pi  --lane "Build the first candidate" --model deepseek/deepseek-flash
+bin/swarm-join join bob   --harness sdk --lane "Reproduce independently" --model deepseek-flash
+# Review agents, models, resource caps and budget before launch: launch starts paid turns.
+bin/swarmctl launch all
+bin/swarm-observer start --port 8788
+bin/swarm-say "Begin the mission; claim work and post evidence."
+```
 
-## Test box
+Choose caps for your workload and physical host; caps are ceilings, not memory reservations. Models/providers are
+configured per agent (`--model`, provider env files; SDK provider flags in per-agent or swarm `sdk.conf`).
+Port blocks are allocated per host across swarms, skipping listening TCP ports; `--port-base` requests an explicit block.
+GPU locks are shared across swarms on that host (`SWARM_HOST_STATE`, default `~/.local/state/swarmkit`). Different operator
+users must set the same `SWARM_GPU_LOCK_DIR` to coordinate a shared host. Locks on different PCs are independent.
+A stale lock is never automatically stolen. Measure the job and ask its owner/operator to release it.
 
-Developed and smoke-tested on one workstation (2 GPUs, Docker + NVIDIA CDI, Node 24, python3.14/uv) reachable only over
-ssh; the hosted relay runs there too. Nothing in bin/ or prompts/ assumes that machine: the box name, GPU count, caps and
-ports are all per-swarm data under `~/swarms/<name>/`.
+Images carry a source fingerprint. Create/launch refuse an old image; rebuild and recreate the affected containers.
+Persistent work, memory and identities survive recreation. `SWARM_ALLOW_STALE_IMAGE=1` is an explicit legacy override.
+Changing the mission refreshes shared/mission.md and generated prompts before launch. Explicit custom prompts are preserved.
+
+## Cloud-only and mixed swarms
+
+An operator can use ordinary CLI tools without Docker. On the relay host (or through its operator), provision namespaced
+identities with the pinned protocol. Short names remain local to the swarm, so several swarms can each have alice and owner.
+
+```bash
+bin/swarm-init demo --room demo-lab --keeper-address 0xYOUR_KEEPER_ADDRESS --mission-file mission.md
+export SWARM_DIR=$HOME/swarms/demo
+bin/swarm-join join alice --harness relay --lane "Research and verify sources"
+bin/swarm-export alice --out join-alice --execution cloud
+```
+
+The identity on the relay is `demo.alice`; its scoped contacts map `alice`, `owner`, `keeper` and peers to this swarm's
+addresses. The shared relay address book and other swarms are untouched. Give the agent the public kit and its token
+through a secret store, separately. It imports contacts, joins the room and polls. See [cloud/README.md](cloud/README.md).
+A pure cloud operator can itself use a relay identity named `demo.owner`: initialize with its public `--owner-address`,
+import names.json with its token, and use `anet send/inbox` rather than swarm-say (which drives a local owner identity).
+
+## Multiple PCs
+
+All PCs use the same room, keeper and operator address. Each agent holds its own key/database, or uses its own relay token.
+Create a local identity on PC B, then register its public address on the operator PC:
+
+```bash
+bin/swarm-join register cara --address 0xCARA_ADDRESS
+bin/swarm-export cara --out join-cara --execution local
+# On PC B, copy the public kit and initialize its local swarm metadata:
+bin/swarm-init demo --from /path/to/join-cara
+# To join as the existing cara identity on PC B:
+export AGENT_HOME=/path/to/cara-home AGENT_NAME=cara
+AGENT_NETWORK=/path/to/built/agent-network /path/to/join-cara/join.sh
+# For additional sandboxes on PC B, create fresh agent names and register their addresses on the operator PC.
+```
+
+Use `swarm-sync --names /path/to/public-roster.json` to merge new peers into a PC's roster. Conflicting mappings are refused.
+`swarm-sync` updates local homes and relay identities recorded in relay-agents.json. On a relay on another host,
+use each identity's `anet contacts --file names.json --no-inbox` (or provision it with `anet relay add-identity ... --names ...`).
+Portable join kits contain only contacts, metadata, a rendered prompt and shared-state snapshots. They contain no keys or tokens.
+A kit does not create a distributed filesystem: configure shared storage, or appoint a ledger keeper and exchange updates in
+room messages. Use `--execution remote --workspace ... --shared ...` when exporting an agent that works through SSH/gateway.
+
+## Operating and stopping
+
+- `swarmctl status/screen`: inspect actual harness processes, memory/CPU usage and GPUs.
+- `swarm-status-writer`: host snapshot every 30 s; run in your swarm's own tmux server.
+- `swarm-watch`: durable periodic status log; optional `--inbox` consumes the operator inbox, so use exactly one reader.
+- `swarmctl park <name>` stops model turns; `unpark` resumes the harness. SDK daemons continue buffering; pi catches up on restart.
+- `swarm-stop`: stop this swarm's owned harnesses, daemons, containers and observer sessions; retain data/tokens.
+
+SDK runners log receives, tool calls, errors and per-turn token usage in net.jsonl, with known env secrets redacted.
+Use `--max-messages`, `--idle-exit`, `--heartbeat-minutes 0` and/or `--max-total-tokens` to set your parking policy.
+The token ceiling retains completed-run totals across restarts and can overshoot by one SDK run; provider failures may not return usage. A token ceiling is not a dollar ceiling;
+monitor the provider's bill and stop agents at your agreed spend limit. Session input keeps a recent window of complete turns;
+SQLite history is retained, and durable notes/shared ledgers preserve decisions. A private pending queue preserves unprocessed inbox batches across parking/restarts. Host runners omit bash unless explicitly enabled.
+
+The observer has its own identity. It cannot see peer DMs or operate the owner's inbox. Its SSE logger deduplicates replay.
+Keep operator requests in DMs to owner, and findings in the room. A newly joined observer has no earlier room history.
+Archive by copying logs, sessions, public prompts, notes and shared evidence; keep private credentials separate.
+
+## Validation
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e . pytest
+TEST_AGENT_NETWORK=/path/to/built/agent-network .venv/bin/python -m pytest tests/
+```
+
+Tests exercise real setup scripts without Docker and actual SDK execution with a local fake model. They never call a paid provider.
+Protocol integration tests in agent-network exercise the real XMTP dev network with throwaway identities.
+Historical prompts and outcomes in examples/ describe one GLM experiment; they are not requirements for a new swarm.
