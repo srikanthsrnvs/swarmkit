@@ -1,6 +1,6 @@
 # Sandbox for the Mac agent: pi + the agent-network pi extension, no host filesystem.
-# Build with the agent-network checkout as context (its .dockerignore applies; seed it from ../image/.dockerignore):
-#   cd <agent-network> && docker build --platform linux/arm64 -t agent-network-sandbox -f <swarmkit>/mac-sandbox/Dockerfile .
+# Build with the swarmkit repo root as context after bin/stage-agent-network.sh <tag> (root .dockerignore applies):
+#   docker build --platform linux/arm64 -t swarmkit-mac-sandbox -f mac-sandbox/Dockerfile .
 FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -23,7 +23,7 @@ RUN useradd -m -s /bin/bash -u 1001 agent \
 
 # the repo (see .dockerignore at the repo root), built in place
 USER agent
-COPY --chown=agent:agent . /opt/agent-network
+COPY --chown=agent:agent image/agent-network /opt/agent-network
 WORKDIR /opt/agent-network
 RUN npm ci --no-audit --no-fund && npm run build \
     && node -e 'import("@xmtp/node-sdk").then(()=>console.log("xmtp native binding ok (" + process.arch + ")"))' \

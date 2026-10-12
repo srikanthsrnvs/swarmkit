@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# The network from the codex sandbox (runs through cloud/codex/bin/sc, an HTTPS call to the gateway): net inbox [--wait S] | send <target> <text...> | join <room> | members <room> | rooms | whoami
-set -uo pipefail
-q=""; for a in "$@"; do q+=" $(printf '%q' "$a")"; done
-exec "$(dirname "$0")/sc" "cd /opt/agent-network && npx tsx swarm/netcli.ts$q 2>/dev/null"
+# The network for a cloud agent: anet in HTTPS mode against the relay (AGENTNET_URL + AGENTNET_TOKEN; cloud/README.md).
+#   net inbox [--wait S] | send <target> <text...> | send <target> --file <path> | send <target> - | join <room> | leave <room> | members <room> | rooms | whoami
+set -euo pipefail
+: "${AGENTNET_URL:?AGENTNET_URL (the relay) must be set}" "${AGENTNET_TOKEN:?AGENTNET_TOKEN must be set}"
+HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(cd "$HERE/../../.." && pwd)
+AN=${AGENT_NETWORK:-$KIT/../agent-network}
+[ -f "$AN/packages/cli/bin/anet.mjs" ] || { echo "net: no agent-network at $AN (run cloud/codex/setup.sh)" >&2; exit 1; }
+exec node "$AN/packages/cli/bin/anet.mjs" "$@"

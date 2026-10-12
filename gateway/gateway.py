@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""swarm gateway: plain-HTTPS (via cloudflared quick tunnel) front door into the agent sandboxes.
+"""swarmkit exec gateway (OPTIONAL): plain-HTTP front door into one swarm's agent sandboxes; put your own HTTPS tunnel in front.
 
 Listens on 127.0.0.1:8790 only. Every request needs `Authorization: Bearer <token>`; tokens live in
-~/swarm/gateway-tokens.json ({agent-name: token}) and a token only ever reaches ITS agent's sandbox
-`swarm-<name>` via `docker exec` (no shell on the host). stdlib only.
+$SWARM_DIR/gateway-tokens.json ({agent-name: token}; default ~/swarms/default) and a token only ever reaches ITS
+agent's sandbox `swarmkit-<swarm>-<name>` via `docker exec` (no shell on the host). stdlib only.
 
   POST /exec    {"cmd": str, "timeout": int (default 600, max 3600), "stdin": str?}
                 -> {"exit": int, "stdout": str, "stderr": str, "ms": int}   (exit 124 on timeout)
   POST /upload  {"path": "/swarm/me/...|/swarm/shared/...|/tmp/...", "content": str, "mode": "0644"}
                 -> {"ok": true, "bytes": n}
-  GET  /health  -> {"ok": true, "agent": name, "container": "swarm-<name>", "running": bool}
-One log line per request on stdout (run-gateway.sh appends it to ~/swarm/gateway.log); never the token.
+  GET  /health  -> {"ok": true, "agent": name, "container": "swarmkit-<swarm>-<name>", "running": bool}
+One log line per request on stdout (run-gateway.sh appends it to $SWARM_DIR/gateway.log); never the token.
 """
 import hmac, json, os, re, shlex, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST, PORT = "127.0.0.1", 8790
-TOKENS_FILE = os.path.expanduser("~/swarm/gateway-tokens.json")
+SWARM_DIR = os.path.expanduser(os.environ.get("SWARM_DIR", "~/swarms/default"))
+SWARM_NAME = os.path.basename(SWARM_DIR.rstrip("/"))
+TOKENS_FILE = os.path.join(SWARM_DIR, "gateway-tokens.json")
+CONTAINER_PREFIX = os.environ.get("SWARM_CONTAINER_PREFIX", f"swarmkit-{SWARM_NAME}-")
 BODY_LIMIT = 2 * 1024 * 1024          # request body
 OUT_LIMIT = 4 * 1024 * 1024           # per stream (stdout / stderr)
 TRUNC = "\n...[truncated]"
@@ -72,7 +75,7 @@ def docker_exec(container, argv_in_container, stdin_bytes, timeout):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "swarm-gateway/1"
+    server_version = "swarmkit-gateway/1"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *a):  # silence default access log (we write our own line)
@@ -109,7 +112,7 @@ class Handler(BaseHTTPRequestHandler):
         agent = self.auth()
         if agent is None:
             return
-        container = f"swarm-{agent}"
+        container = f"{CONTAINER_PREFIX}{agent}"
         t0 = time.monotonic()
         try:
             r = subprocess.run(["docker", "inspect", "-f", "{{.State.Running}}", container], capture_output=True, timeout=30)
@@ -126,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
         agent = self.auth()
         if agent is None:
             return
-        container = f"swarm-{agent}"
+        container = f"{CONTAINER_PREFIX}{agent}"
         raw = self.read_body()
         if raw is None:
             self.send_json(413, {"error": f"body exceeds {BODY_LIMIT} bytes"}); log(agent, 413, 0, self.path); return

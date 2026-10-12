@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# Setup script for the Codex cloud environment of the swarm agent "codex".
-# Needs (set in Codex's environment settings):
-#   variable SWARM_GATEWAY_HOST   the HTTPS gateway hostname of the box, e.g. words-words-words.trycloudflare.com
-#                                 (= contents of ~/.config/agent-network/codex_gateway_host on the Mac; current value
-#                                 on the box in ~/swarm/codex/GATEWAY — it changes when the quick tunnel restarts)
-#   secret   CODEX_GATEWAY_TOKEN  bearer token that reaches ONLY the swarm-codex sandbox
-#                                 (= contents of ~/.config/agent-network/codex_gateway_token on the Mac)
-# Internet access for the agent phase: on (unrestricted, or at least *.trycloudflare.com). No cloudflared, no ssh:
-# every cloud/codex/bin/sc call is one plain HTTPS POST to the gateway, which runs the command inside the sandbox.
-# The old SSH path (CODEX_SSH_KEY secret, SWARM_TUNNEL_HOST variable, `ssh swarmbox`, cloudflared access) is NO
-# LONGER NEEDED: Codex's egress proxy blocks the WebSocket upgrade that cloudflared access requires.
-# No XMTP domains needed: this agent never runs the network stack itself — everything happens on the box.
+# Setup script for a cloud environment (Codex or similar) running one swarm agent.
+# Needs: AGENTNET_URL (variable) and AGENTNET_TOKEN (secret) for the relay — see cloud/README.md.
+# Optional: SWARM_GATEWAY_HOST (variable) + SWARM_GATEWAY_TOKEN (secret) for a shell in a sandbox on the box (gateway/README.md).
+# Installs agent-network at the pinned tag next to this repo so cloud/codex/bin/net (= anet in HTTPS mode) works.
 set -euo pipefail
-: "${SWARM_GATEWAY_HOST:?set the SWARM_GATEWAY_HOST variable}" "${CODEX_GATEWAY_TOKEN:?set the CODEX_GATEWAY_TOKEN secret}"
-command -v python3 >/dev/null || { echo "python3 is required by cloud/codex/bin/sc" >&2; exit 1; }
-chmod +x "$(dirname "$0")/bin/"*
-"$(dirname "$0")/bin/sc" 'echo "sandbox reachable: $(hostname) as $(whoami); GPUs: $(nvidia-smi -L | wc -l)"'
+: "${AGENTNET_URL:?set the AGENTNET_URL variable}" "${AGENTNET_TOKEN:?set the AGENTNET_TOKEN secret}"
+HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(cd "$HERE/../.." && pwd)
+TAG=${AGENT_NETWORK_TAG:-$(cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.2.0)}
+AN=${AGENT_NETWORK:-$KIT/../agent-network}
+command -v node >/dev/null || { echo "node 22+ is required for anet" >&2; exit 1; }
+if [ ! -f "$AN/packages/cli/bin/anet.mjs" ]; then
+  git clone -q --depth 1 --branch "$TAG" https://github.com/srikanthsrnvs/agent-network "$AN"
+  (cd "$AN" && npm ci --no-audit --no-fund >/dev/null && npm run build >/dev/null)
+fi
+chmod +x "$HERE/bin/"*
+echo "network: $("$HERE/bin/net" whoami)"
+if [ -n "${SWARM_GATEWAY_HOST:-}" ]; then
+  command -v python3 >/dev/null || { echo "python3 is required by cloud/codex/bin/sc" >&2; exit 1; }
+  "$HERE/bin/sc" 'echo "sandbox reachable: $(hostname) as $(whoami); GPUs: $(nvidia-smi -L 2>/dev/null | wc -l)"'
+fi

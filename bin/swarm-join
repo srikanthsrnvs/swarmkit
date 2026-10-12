@@ -1,48 +1,37 @@
 #!/usr/bin/env bash
-# swarm-join (was swarm/agentnet in agent-network): one command to put a new agent on the swarm (runs on the box, as the swarm operator).
-# Thin orchestration over bin/add-agent.sh, bin/swarmctl and ~/swarm/gateway-tokens.json — it rewrites none of them.
+# swarm-join: one command to put a new agent on a swarm (runs on the box, as the operator). Thin orchestration over
+# bin/add-agent.sh, bin/swarmctl and, for cloud agents, the relay or the optional exec gateway — it rewrites none of them.
 #
-#   swarm-join join <name> --harness pi|cli|gateway [--model provider/model] [--env-file f]
+#   swarm-join join <name> --harness pi|sdk|cli|relay|gateway [--model provider/model] [--env-file f]
 #                        [--lane 'text' | --lane-file f] [--mem 48g] [--cpus 16] [--launch]
-#       pi       identity + prompt + sandbox (add-agent.sh), optional `swarmctl launch`, and the nudge line to type
-#       cli      identity + prompt + sandbox; prints the three-wrapper kit (ssh + docker exec) its operator needs;
-#                the agent's harness (Claude Code, a human, cron) runs the verbs inside the sandbox
-#       gateway  identity + prompt + sandbox + a bearer token in ~/swarm/gateway-tokens.json (0600, atomic; the
-#                gateway reads it on every request, no restart); prints the HTTPS kit (host, token file, setup line)
-#   swarm-join selftest <name> [--container c]   inside the agent's sandbox: `send keeper rooms`, then `inbox --wait 10`,
-#                                               and assert the keeper answered (the only network action; harmless)
-#   swarm-join status                             one line per agent: container up? pi or netd running? queued messages
+#       pi       identity + prompt + sandbox (add-agent.sh); optional `swarmctl launch`; the nudge line to type
+#       sdk      the same, with the swarmkit OpenAI Agents SDK runner as the harness (python -m swarmkit.run in the sandbox)
+#       cli      identity + prompt + sandbox; the agent's harness (Claude Code over ssh, a human, cron) runs `anet` inside
+#                the sandbox: prints the wrapper lines (cloud/claude/{sc,net,memo} are the same shape)
+#       relay    NO sandbox: an identity on the hosted relay (`anet relay add-identity` on the relay host) for a cloud agent
+#                that talks over HTTPS — prints the AGENTNET_URL / token-file lines and the MCP attach command (cloud/README.md)
+#       gateway  identity + prompt + sandbox + a bearer token for the OPTIONAL exec gateway (gateway/README.md): a cloud
+#                agent gets a shell in its sandbox over HTTPS; its network is still the relay (harness relay) or anet inside
+#   swarm-join selftest <name>      inside the agent's sandbox: `anet send keeper rooms`, then `anet inbox --wait 15`, and
+#                                   assert the keeper answered (the only network action; harmless)
+#   swarm-join status               one line per agent: container up? harness running? queued messages
 #
-# Idempotent: join refuses a name that already exists (names.json, ~/swarm/<name>/home/key or container swarm-<name>).
-# NOTE (swarmkit): the box's ~/agent-network and the swarm-agent image are FROZEN copies of the pre-split layout
-# (swarm/netcli.ts, packages/client, packages/pi-extension) while the GLM swarm runs; paths inside the
-# sandboxes are therefore unchanged here. Switching the box to a pinned agent-network tag is a later, explicit step.
+# Idempotent: join refuses a name that already exists (names.json, <swarm>/<name>/home/key or its container).
+# SWARM_DIR selects the swarm (default ~/swarms/default). RELAY_HOME (default ~/relay) is where `--harness relay` creates identities.
 set -euo pipefail
-SWARM=${SWARM_DIR:-$HOME/swarm}
-HERE=$(cd "$(dirname "$0")" && pwd)
-KIT=$(dirname "$HERE")
-export REPO=${REPO:-$HOME/agent-network}
+SWARM=${SWARM_DIR:-$HOME/swarms/default}; SWARM_NAME=$(basename "$SWARM")
+HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(dirname "$HERE")
 export SWARM_DIR=$SWARM
 TOKENS="$SWARM/gateway-tokens.json"
+RELAY_URL=$(cat "$SWARM/relay" 2>/dev/null || echo https://relay.deepshard.org)
+ANET_HOST="${AGENT_NETWORK:-$KIT/image/agent-network}/packages/cli/bin/anet.mjs"
 die() { echo "swarm-join: $*" >&2; exit 1; }
-usage() { sed -n '2,20p' "$0" >&2; exit 2; }
-cname() { echo "swarm-$1"; }
+usage() { sed -n '2,22p' "$0" >&2; exit 2; }
+cname() { echo "swarmkit-$SWARM_NAME-$1"; }
 exists_container() { docker container inspect "$(cname "$1")" >/dev/null 2>&1; }
 
-gateway_host() {
-  # the named tunnel's hostname that fronts the gateway (:8790), else the quick-tunnel name the box recorded
-  local h=""
-  for f in "$HOME/.cloudflared/config.yml" /etc/cloudflared/config.yml; do
-    [ -f "$f" ] || continue
-    h=$(awk '/^[[:space:]]*-[[:space:]]*hostname:/ { host=$NF } /service:.*:8790/ { print host; exit }' "$f")
-    [ -n "$h" ] && { echo "$h"; return; }
-  done
-  [ -f "$SWARM/codex/GATEWAY" ] && { tr -d '[:space:]' < "$SWARM/codex/GATEWAY"; return; }
-  echo "<gateway host: see ~/swarm/codex/GATEWAY or ~/.cloudflared/config.yml>"
-}
-
 add_token() {
-  # add {"<name>": "<48 hex>"} unless present; 0600; atomic rewrite. Never prints the token.
+  # add {"<name>": "<48 hex>"} to the gateway's token file unless present; 0600; atomic rewrite. Never prints the token.
   local name=$1 tmp
   [ -f "$TOKENS" ] || { (umask 077; echo '{}' > "$TOKENS"); }
   if jq -e --arg n "$name" 'has($n)' "$TOKENS" >/dev/null; then echo "token for $name already in $TOKENS (kept)"; return; fi
@@ -61,60 +50,81 @@ cmd_join() {
     --lane) lane=(--lane "$2"); shift 2;; --lane-file) lane=(--lane-file "$2"); shift 2;;
     --mem) mem=$2; shift 2;; --cpus) cpus=$2; shift 2;; --launch) launch=1; shift;;
     *) die "unknown flag $1";; esac; done
-  case "$harness" in pi|cli|gateway) ;; *) die "--harness pi|cli|gateway is required";; esac
+  case "$harness" in pi|sdk|cli|relay|gateway) ;; *) die "--harness pi|sdk|cli|relay|gateway is required";; esac
   [ -z "$envfile" ] || [ -f "$envfile" ] || die "no such env file: $envfile"
-  [ -f "$SWARM/names.json" ] || die "no $SWARM/names.json; this is not a swarm box"
+  local room; room=$(cat "$SWARM/room" 2>/dev/null || echo swarm)
+
+  if [ "$harness" = relay ]; then
+    # an identity on the relay, no sandbox: the relay host runs `anet relay add-identity`
+    local rhome=${RELAY_HOME:-$HOME/relay}
+    [ -f "$ANET_HOST" ] || die "need the built host copy of agent-network (bin/stage-agent-network.sh --build) to run anet relay add-identity"
+    [ -d "$rhome" ] || die "no relay home at $rhome (this box does not run the relay? run this on the relay host, or RELAY_HOME=…)"
+    local out; out=$(node "$ANET_HOST" relay add-identity "$name" --home "$rhome")
+    local addr; addr=$(printf '%s\n' "$out" | tail -1 | jq -r .address)
+    # the swarm's agents learn the name; the relay's own identities already know each other
+    jq -e --arg n "$name" 'has($n)' "$SWARM/names.json" >/dev/null 2>&1 || { tmp=$(mktemp); jq --arg n "$name" --arg a "$addr" '. + {($n): $a}' "$SWARM/names.json" > "$tmp" && mv "$tmp" "$SWARM/names.json" && chmod 644 "$SWARM/names.json"; for h in "$SWARM"/*/home; do cp "$SWARM/names.json" "$h/names.json"; done; }
+    cat <<K
+
+== $name ($addr) is a cloud agent on the relay $RELAY_URL ==
+  token file:   $rhome/tokens/$name.token   (0600; hand it over out of band; never paste it into a chat or a prompt)
+  any shell-capable agent (anet HTTPS mode; needs Node 22+ and a clone of agent-network):
+      export AGENTNET_URL=$RELAY_URL AGENTNET_TOKEN=\$(cat $name.token)
+      anet join $room && anet send $room "$name here" && anet inbox --wait 60
+  Claude Code / Codex / the Agents SDK (MCP over HTTP; tools send, join, leave, members, wait):
+      claude mcp add --transport http agentnet $RELAY_URL/v1/mcp --header "Authorization: Bearer \$(cat $name.token)"
+  curl:  curl -s -H "Authorization: Bearer \$T" -A $name/0.1 "$RELAY_URL/v1/inbox?wait=60"
+  Its prompt: render one with prompts/render-prompts.sh --name $name --lane '…' --room $room (the relay agent reads it as its system prompt).
+  The relay's shared names.json ($rhome/names.json) should list this swarm's agents so $name can address them by name.
+K
+    return
+  fi
+
+  [ -f "$SWARM/names.json" ] || die "no $SWARM/names.json; create the swarm with bin/swarm-init first"
   jq -e --arg n "$name" 'has($n)' "$SWARM/names.json" >/dev/null && die "$name already exists in $SWARM/names.json"
   [ -f "$SWARM/$name/home/key" ] && die "$name already has an identity at $SWARM/$name/home/key"
   exists_container "$name" && die "container $(cname "$name") already exists"
-  local keeper; keeper=$(tr -d '[:space:]' < "$SWARM/keeper/address")
 
-  # per-agent files swarmctl reads at create time, so they must exist before add-agent.sh creates the container
-  mkdir -p "$SWARM/$name"
-  if [ -n "$envfile" ]; then install -m 600 "$envfile" "$SWARM/$name/env"; echo "env file -> $SWARM/$name/env (0600)"; fi
-  if [ -n "$model" ]; then echo "$model" > "$SWARM/$name/model"; echo "model -> $SWARM/$name/model ($model)"; fi
-
-  "$HERE/add-agent.sh" "$name" --mem "$mem" --cpus "$cpus" "${lane[@]}"
+  local -a extra=(); [ -n "$model" ] && extra+=(--model "$model"); [ -n "$envfile" ] && extra+=(--env-file "$envfile")
+  local h=pi; [ "$harness" = sdk ] && h=sdk
+  "$HERE/add-agent.sh" "$name" --harness "$h" --mem "$mem" --cpus "$cpus" "${lane[@]}" "${extra[@]}"
   local addr; addr=$(jq -r --arg n "$name" '.[$n]' "$SWARM/names.json")
 
   case "$harness" in
-    pi)
+    pi|sdk)
       if [ $launch = 1 ]; then "$HERE/swarmctl" launch "$name"; fi
       cat <<K
 
-== $name ($addr) is a pi agent in $(cname "$name") ==
-$( [ $launch = 1 ] && echo "pi is running (tmux session pi inside the sandbox). Watch it:  $HERE/swarmctl screen $name" || echo "start it:  $HERE/swarmctl launch $name     (then: swarmctl screen $name)" )
-nudge once it is up (its prompt already says to join swarm; this just gets it moving):
-  $HERE/swarmctl say $name "Owner: you are new. join swarm, say who you are and your lane in the room, read /swarm/shared/BOARD.md, then work."
+== $name ($addr) is a $harness agent in $(cname "$name") ==
+$( [ $launch = 1 ] && echo "running (tmux session agent inside the sandbox). Watch it:  SWARM_DIR=$SWARM $HERE/swarmctl screen $name" || echo "start it:  SWARM_DIR=$SWARM $HERE/swarmctl launch $name     (then: swarmctl screen $name)" )
+$( [ "$harness" = pi ] && echo "nudge once it is up (its prompt already says to join $room; this just gets it moving):
+  $HERE/swarmctl say $name \"Owner: you are new. join $room, say who you are and your lane in the room, read /swarm/shared/BOARD.md, then work.\"" )
 K
       ;;
     cli)
       cat <<K
 
 == $name ($addr) is a CLI-driven agent; its body is $(cname "$name") ==
-Give its operator these three wrappers (swarmkit's cloud/claude/{sc,net,memo} are the same shape):
-  sc:    ssh -o BatchMode=yes threadripper docker exec -u agent -w /swarm/me/work $(cname "$name") bash -lc "\$(printf '%q' "\$*")"
-  net:   sc "cd /opt/agent-network && npx tsx swarm/netcli.ts <inbox [--wait S] | send <target> <text...> | send <target> --file <path> | join <room> | leave <room> | members <room> | rooms | whoami>"
+Give its operator these wrappers (cloud/claude/{sc,net,memo} are the same shape; SWARM_AGENT=$name SWARM_NAME=$SWARM_NAME):
+  sc:    ssh -o BatchMode=yes <box> docker exec -u agent -w /swarm/me/work $(cname "$name") bash -lc "\$(printf '%q' "\$*")"
+  net:   sc "anet <inbox [--wait S] | send <target> <text...> | send <target> --file <path> | join <room> | leave <room> | members <room> | rooms | whoami>"
          (the first call starts the resident network daemon inside the sandbox; inbox --wait S is a long-poll)
   memo:  sc "/home/agent/.optmem/memo <wake|note|nap|recall|zoom ...>"
-Its prompt is $SWARM/prompts/$name.md (derive a polling variant like prompts/derive-agent-prompt.py does for claude).
-Check it:  $HERE/swarm-join selftest $name
+Its prompt is $SWARM/prompts/$name.md (it polls: tell it to run net inbox between steps).
+Check it:  SWARM_DIR=$SWARM $HERE/swarm-join selftest $name
 K
       ;;
     gateway)
       add_token "$name"
-      local host; host=$(gateway_host)
       cat <<K
 
-== $name ($addr) is a cloud agent reaching $(cname "$name") over HTTPS ==
-  gateway host:  $host
-  token:         the "$name" entry in $TOKENS on this box (0600; never paste it into a chat or a prompt)
-  kit:           copy cloud/codex/bin/{sc,net,memo} from swarmkit; in the agent's environment set
-                   SWARM_GATEWAY_HOST=$host
-                   CODEX_GATEWAY_TOKEN=\$(jq -r .$name $TOKENS)      # as a SECRET on the agent side
-                 then run  bash cloud/codex/setup.sh  there (it prints "sandbox reachable: $name ...").
-  prompt:        $SWARM/prompts/$name.md (polling variant: see prompts/derive-agent-prompt.py; the codex one is cloud/codex/PROMPT.md)
-Check it:  $HERE/swarm-join selftest $name
+== $name ($addr) has a sandbox $(cname "$name") reachable over the OPTIONAL exec gateway (gateway/README.md) ==
+  token:   the "$name" entry in $TOKENS on this box (0600; never paste it into a chat or a prompt)
+  kit:     cloud/codex/bin/{sc,net,memo}; in the agent's environment set SWARM_GATEWAY_HOST=<the gateway's hostname>
+           and the secret SWARM_GATEWAY_TOKEN=\$(jq -r .$name $TOKENS); run cloud/codex/setup.sh there
+  network: inside the sandbox \`anet\` works as for any agent (\`net\` wraps it through sc); the gateway is only the shell.
+  prompt:  $SWARM/prompts/$name.md
+Run the gateway on this box:  SWARM_DIR=$SWARM gateway/run-gateway.sh   (127.0.0.1:8790; put your own HTTPS tunnel in front)
+Check it:  SWARM_DIR=$SWARM $HERE/swarm-join selftest $name
 K
       ;;
   esac
@@ -123,29 +133,28 @@ K
 cmd_selftest() {
   local name=${1:-}; [ -n "$name" ] || usage; shift
   local c; c=$(cname "$name")
-  while [ $# -gt 0 ]; do case "$1" in --container) c=$2; shift 2;; *) die "unknown flag $1";; esac; done
   docker container inspect "$c" >/dev/null 2>&1 || die "no container $c"
-  echo "selftest: $c -> send keeper rooms, inbox --wait 10"
+  echo "selftest: $c -> anet send keeper rooms, anet inbox --wait 15"
   local out rc=0
-  out=$(docker exec -u agent -w /swarm/me/work "$c" bash -lc 'cd /opt/agent-network && npx tsx swarm/netcli.ts send keeper rooms && npx tsx swarm/netcli.ts inbox --wait 10' 2>&1) || rc=$?
+  out=$(docker exec -u agent -w /swarm/me/work "$c" bash -lc 'anet send keeper rooms && anet inbox --wait 15' 2>&1) || rc=$?
   printf '%s\n' "$out"
   if [ $rc -eq 0 ] && grep -Eq '^\[[^]]+\] keeper dm' <<<"$out"; then echo "selftest OK: the keeper answered"; else echo "selftest FAILED (rc=$rc): no keeper reply seen" >&2; exit 1; fi
 }
 
 cmd_status() {
   [ -f "$SWARM/agents.txt" ] || die "no $SWARM/agents.txt"
-  local n c up run q
+  local n c up run q h
   while read -r n; do
     [ -n "$n" ] || continue
-    c=$(cname "$n")
+    c=$(cname "$n"); h=$(cat "$SWARM/$n/harness" 2>/dev/null || echo pi)
     up=$(docker container inspect -f '{{.State.Running}}' "$c" 2>/dev/null || echo missing)
     run=idle
     if [ "$up" = true ]; then
-      if docker exec -u agent "$c" tmux has-session -t pi 2>/dev/null; then run="pi running"; fi
-      if docker exec -u agent "$c" pgrep -f 'swarm/netd.ts' >/dev/null 2>&1; then [ "$run" = idle ] && run="netd running" || run="$run + netd"; fi
+      if docker exec -u agent "$c" tmux has-session -t agent 2>/dev/null; then run="$h running"; fi
+      if docker exec -u agent "$c" pgrep -f 'relay/dist/daemon.js' >/dev/null 2>&1; then [ "$run" = idle ] && run="daemon running" || run="$run + daemon"; fi
     fi
     q=$(grep -c . "$SWARM/$n/home/netd-queue.jsonl" 2>/dev/null || true); q=${q:-0}
-    printf '%-8s container %-8s %-14s queue %s\n' "$n" "$( [ "$up" = true ] && echo up || echo "$up" )" "$run" "$q"
+    printf '%-8s container %-8s %-18s queue %s\n' "$n" "$( [ "$up" = true ] && echo up || echo "$up" )" "$run" "$q"
   done < "$SWARM/agents.txt"
 }
 

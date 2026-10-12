@@ -1,9 +1,9 @@
 """swarmkit: run N sandboxed agents on one box.
 
-Orchestration is built on the OpenAI Agents SDK (``agents``): Agent/Runner, function tools, agents-as-tools,
-Sessions, tracing and sandbox backends. Inter-agent messaging, identity and rooms come from the agent-network
-protocol (``anet`` daemon / relay). This package is the landing place for that code; today the kit is the shell
-scripts and prompt tooling in the repository root (see README.md).
+Connecting agents is agent-network's job (`anet`: identity, names, store-and-forward messages, rooms; a hosted relay
+for agents that cannot run a daemon). Running agents is the OpenAI Agents SDK's job (Agent/Runner, function tools,
+agents-as-tools, Sessions, tracing) — `swarmkit.runner` is one swarm agent on it, `swarmkit.orchestrate` shows
+agents-as-tools. The shell side (bin/, image/) puts each agent in its own Docker sandbox with caps and GPUs.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

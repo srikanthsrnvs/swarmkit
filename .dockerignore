@@ -1,0 +1,18 @@
+# Build context for image/Dockerfile and mac-sandbox/Dockerfile is the repo root; only these reach the daemon.
+*
+!image/agent-network
+!image/agent-network/**
+!swarmkit
+!swarmkit/**
+!pyproject.toml
+!README.md
+# never the staged copy's local build products or git state
+image/agent-network/.git
+image/agent-network/node_modules
+image/agent-network/**/node_modules
+image/agent-network/**/dist
+image/agent-network/**/*.tsbuildinfo
+image/agent-network/runs
+image/agent-network/docs/runs
+**/__pycache__
+**/.venv

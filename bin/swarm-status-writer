@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Host-side loop: every 30 s write a snapshot of RAM, GPUs, this swarm's container caps/usage and GPU locks atomically
+# to <swarm>/shared/status/host.txt, readable inside every sandbox (ramcheck.sh prints it). Run on the host (docker
+# group) in tmux: SWARM_DIR=~/swarms/<name> bin/swarm-status-writer
+set -u
+SWARM=${SWARM_DIR:-$HOME/swarms/default}; SWARM_NAME=$(basename "$SWARM")
+OUT="$SWARM/shared/status/host.txt"; mkdir -p "$(dirname "$OUT")"
+while true; do
+  tmp="$OUT.tmp.$$"
+  {
+    echo "# host status for swarm $SWARM_NAME, written every 30 s by swarmkit/bin/swarm-status-writer (host)"
+    echo "time_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo; echo "## RAM (GB) — the whole box; keep the sum of all jobs under what it has"; free -g
+    echo; echo "## GPUs: index, mem.used, mem.total, util"; nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>&1 || echo "(no GPU)"
+    echo; echo "## sandboxes: live usage (cpu%, mem used/cap, pids)"
+    docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}} pids={{.PIDs}}' $(docker ps --filter "name=swarmkit-$SWARM_NAME-" -q) 2>&1 | sort
+    echo; echo "## sandbox caps (name mem cpus) from limits.conf"; cat "$SWARM/limits.conf" 2>/dev/null
+    echo; echo "## GPU locks"; "$SWARM/shared/gpuclaim.sh" status 2>&1
+    echo; echo "## ports listening on the host"; ss -ltnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -n | uniq | tr '\n' ' '; echo
+  } > "$tmp" 2>&1 && mv -f "$tmp" "$OUT"
+  sleep 30
+done

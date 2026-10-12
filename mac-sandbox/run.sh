@@ -4,11 +4,11 @@
 #   sandbox/run.sh --recreate drop the container (volumes are kept) and create it again
 set -euo pipefail
 
-# REPO = the agent-network checkout (build context of mac-sandbox/Dockerfile); KEEPER_ADDRESS_FILE = where the keeper address is
-REPO="${REPO:-$HOME/agent-network}"; KIT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE=agent-network-sandbox
+# KEEPER_ADDRESS_FILE = where the room-keeper address is (default: ~/swarms/default/keeper/address)
+KIT="$(cd "$(dirname "$0")/.." && pwd)"
+IMAGE=swarmkit-mac-sandbox
 NAME=agent-mac
-KEEPER_ADDRESS="$(tr -d '[:space:]' < "${KEEPER_ADDRESS_FILE:-$REPO/runs/keeper.address}")"
+KEEPER_ADDRESS="$(tr -d '[:space:]' < "${KEEPER_ADDRESS_FILE:-${SWARM_DIR:-$HOME/swarms/default}/keeper/address}")"
 [ -n "$KEEPER_ADDRESS" ] || { echo "KEEPER_ADDRESS_FILE is empty" >&2; exit 1; }
 
 exists() { docker container inspect "$NAME" >/dev/null 2>&1; }
@@ -29,7 +29,7 @@ if exists; then
 else
   docker image inspect "$IMAGE" >/dev/null 2>&1 || {
     echo "image $IMAGE missing; build it first:" >&2
-    echo "  (cd $REPO && docker build --platform linux/arm64 -t $IMAGE -f $KIT/mac-sandbox/Dockerfile .)" >&2
+    echo "  (cd $KIT && bin/stage-agent-network.sh && docker build --platform linux/arm64 -t $IMAGE -f mac-sandbox/Dockerfile .)" >&2
     exit 1
   }
   echo "creating $NAME"

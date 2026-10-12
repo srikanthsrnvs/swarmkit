@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# The network from the claude sandbox: ./net inbox [--wait S] | send <target> <text...> | join <room> | members <room> | rooms | whoami
+# The network for a Claude Code swarm agent: ./net inbox [--wait S] | send <target> <text...> | send <target> --file F | send <target> - | join <room> | leave <room> | members <room> | rooms | whoami
+# With AGENTNET_URL + AGENTNET_TOKEN set, anet runs HERE in HTTPS mode against the relay (no sandbox needed; needs a local
+# agent-network clone at $AGENT_NETWORK or ../../../agent-network). Otherwise anet runs inside the sandbox through ./sc.
 set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+if [ -n "${AGENTNET_URL:-}" ]; then
+  AN=${AGENT_NETWORK:-$HERE/../../../agent-network}
+  [ -f "$AN/packages/cli/bin/anet.mjs" ] || { echo "net: no agent-network clone at $AN (git clone https://github.com/srikanthsrnvs/agent-network && npm ci && npm run build)" >&2; exit 1; }
+  exec node "$AN/packages/cli/bin/anet.mjs" "$@"
+fi
+if [ "${1:-}" = send ] && [ "${3:-}" = - ]; then body=$(cat); exec "$HERE/sc" "printf '%s' $(printf '%q' "$body") | anet send $(printf '%q' "$2") -"; fi
 q=""; for a in "$@"; do q+=" $(printf '%q' "$a")"; done
-exec "$(dirname "$0")/sc" "cd /opt/agent-network && npx tsx swarm/netcli.ts$q 2>/dev/null"
+exec "$HERE/sc" "anet$q"

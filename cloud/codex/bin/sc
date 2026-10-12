@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""sc — run a shell command inside the codex sandbox on the Threadripper, over the HTTPS gateway.
+"""sc — run a shell command inside this agent's sandbox on the box, over the optional HTTPS exec gateway (gateway/README.md).
 
 Usage:  cloud/codex/bin/sc '<cmd ...>'                 all args are joined by spaces into one bash command
         cloud/codex/bin/sc --upload <local-file> <remote-path>   ship a file into the sandbox (/swarm/me/..., /swarm/shared/..., /tmp/...)
-Env:    SWARM_GATEWAY_HOST   e.g. words-words-words.trycloudflare.com   (required)
-        CODEX_GATEWAY_TOKEN  bearer token for the "codex" sandbox          (required, secret)
+Env:    SWARM_GATEWAY_HOST   the gateway's hostname (no https://)        (required)
+        SWARM_GATEWAY_TOKEN  bearer token for THIS agent's sandbox        (required, secret; CODEX_GATEWAY_TOKEN still accepted)
         SC_TIMEOUT           remote timeout in seconds (default 90, max 3600)
-Each call is ONE HTTPS POST: the gateway runs `bash -lc <cmd>` in swarm-codex (cwd /swarm/me/work, user agent) and
+Each call is ONE HTTPS POST: the gateway runs `bash -lc <cmd>` in the sandbox (cwd /swarm/me/work, user agent) and
 returns exit code, stdout, stderr. stdout/stderr are relayed, the exit code becomes this process's exit code
 (124 = remote timeout). Network/gateway failures are retried 3 times with 15 s pauses, then exit 255.
 Long jobs: cloud/codex/bin/sc "tmux new -d -s <job> '<command>'" and poll the log with sc. stdlib only.
@@ -21,9 +21,10 @@ def die(msg, code=255):
 
 
 def env():
-    host, tok = os.environ.get("SWARM_GATEWAY_HOST", "").strip(), os.environ.get("CODEX_GATEWAY_TOKEN", "").strip()
+    host = os.environ.get("SWARM_GATEWAY_HOST", "").strip()
+    tok = (os.environ.get("SWARM_GATEWAY_TOKEN") or os.environ.get("CODEX_GATEWAY_TOKEN") or "").strip()
     if not host or not tok:
-        die("SWARM_GATEWAY_HOST and CODEX_GATEWAY_TOKEN must be set (see cloud/codex/README.md)", 2)
+        die("SWARM_GATEWAY_HOST and SWARM_GATEWAY_TOKEN must be set (see gateway/README.md)", 2)
     host = host.replace("https://", "").replace("http://", "").rstrip("/")
     return host, tok
 
@@ -32,7 +33,7 @@ def post(path, body, timeout):
     host, tok = env()
     data = json.dumps(body).encode()
     req = urllib.request.Request(f"https://{host}{path}", data=data, method="POST",
-                                 headers={"User-Agent": "swarm-sc/1.0",  # Cloudflare blocks the default Python-urllib agent
+                                 headers={"User-Agent": "swarmkit-sc/1.0",  # Cloudflare blocks the default Python-urllib agent
                  "Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
     last = None
     for attempt in range(1, ATTEMPTS + 1):
@@ -49,7 +50,7 @@ def post(path, body, timeout):
             sys.stderr.write(f"sc: {last}; retry {attempt}/{ATTEMPTS - 1} in {PAUSE}s\n"); sys.stderr.flush()
             time.sleep(PAUSE)
     die(f"the gateway is unreachable ({last}); the tunnel may be down or SWARM_GATEWAY_HOST stale "
-        f"(current hostname lives in ~/swarm/codex/GATEWAY on the box)")
+        f"(ask the operator for the gateway hostname)")
 
 
 def main(argv):

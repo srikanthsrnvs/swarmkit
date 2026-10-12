@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Create a swarm home: bin/swarm-init <swarm-name> --room <room> [--relay URL] [--keeper-address 0x…] [--dir DIR]
+#                                    [--mission-file f] [--env-file f] [--tag vX.Y.Z]
+#   <swarm-name>      the home becomes ~/swarms/<swarm-name> (or --dir); containers are swarmkit-<swarm-name>-<agent>
+#   --room            the room every agent of this swarm joins (lowercase; unique per keeper — rooms are global)
+#   --keeper-address  reuse a running room-keeper (the hosted relay's keeper, or another swarm's); without it a keeper
+#                     identity is created under <home>/keeper and the command to run the keeper service is printed
+#   --relay URL       record a hosted relay for cloud agents (cloud/README.md); default https://relay.deepshard.org
+#   --mission-file    the mission text rendered into every prompt ({{MISSION}}); default: a placeholder you edit
+#   --env-file        API keys for the sandboxes (DEEPSEEK_API_KEY=… etc.), copied to <home>/env (0600)
+# Also creates the owner identity (<home>/owner/home) for the observer / owner messages, names.json, limits.conf,
+# agents.txt, pi-seed/, shared/ (gpuclaim.sh, ramcheck.sh, README.md, BOARD.md), prompts/prompt.template.md, and
+# prints the kickoff command. Idempotent on an existing home (it fills in what is missing).
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(dirname "$HERE")
+name=${1:?swarm name}; shift
+[[ "$name" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || { echo "bad swarm name: $name" >&2; exit 1; }
+room=""; relay=https://relay.deepshard.org; keeper=""; dir="$HOME/swarms/$name"; mission=""; envfile=""; tag=""
+while [ $# -gt 0 ]; do case "$1" in
+  --room) room=$2; shift 2;; --relay) relay=$2; shift 2;; --keeper-address) keeper=$2; shift 2;; --dir) dir=$2; shift 2;;
+  --mission-file) mission=$2; shift 2;; --env-file) envfile=$2; shift 2;; --tag) tag=$2; shift 2;; *) echo "unknown flag $1" >&2; exit 1;; esac; done
+[ -n "$room" ] || { echo "--room <room> is required" >&2; exit 1; }
+room=$(tr 'A-Z' 'a-z' <<<"$room")
+[ -z "$keeper" ] || [[ "$keeper" =~ ^0x[0-9a-fA-F]{40}$ ]] || { echo "--keeper-address must be a 0x address" >&2; exit 1; }
+[ "$dir" = "$HOME/swarm" ] && { echo "refusing $HOME/swarm (legacy swarm home)" >&2; exit 1; }
+tag=${tag:-${AGENT_NETWORK_TAG:-$(cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.2.0)}}
+IMAGE=${IMAGE:-swarmkit-agent:$tag}
+mkdir -p "$dir"/{keeper,owner/home,prompts,pi-seed,shared/{status,locks,logs,bin,extensions,models,builds,hf}}
+export SWARM_DIR=$dir
+
+anet_init() { # <name> <home>
+  local host_anet="${AGENT_NETWORK:-$KIT/image/agent-network}/packages/cli/bin/anet.mjs"
+  if [ -f "$host_anet" ] && [ -f "$(dirname "$host_anet")/../../core/dist/keystore.js" ] && command -v node >/dev/null; then
+    AGENT_HOME="$2" node "$host_anet" init "$1"
+  elif docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    docker run --rm -u "$(id -u)" -v "$2:/swarm/me/home" -e AGENT_HOME=/swarm/me/home -e HOME=/tmp "$IMAGE" anet init "$1"
+  else
+    echo "need a built host copy (bin/stage-agent-network.sh $tag --build) or the image $IMAGE (swarmctl build)" >&2; return 1
+  fi
+}
+addr_of() { printf '%s\n' "$1" | tail -1 | jq -r .address; }
+
+echo "$room" > "$dir/room"; echo "$tag" > "$dir/agent-network.tag"; echo "$relay" > "$dir/relay"
+[ -f "$dir/names.json" ] || echo '{}' > "$dir/names.json"
+touch "$dir/agents.txt" "$dir/limits.conf"
+[ -f "$dir/env" ] || { touch "$dir/env"; chmod 600 "$dir/env"; }
+[ -z "$envfile" ] || install -m 600 "$envfile" "$dir/env"
+[ -f "$dir/pi-seed/models.json" ] || echo '{"providers": {}}' > "$dir/pi-seed/models.json"
+[ -f "$dir/pi-seed/settings.json" ] || echo '{"steeringMode":"all","followUpMode":"all","httpIdleTimeoutMs":600000}' > "$dir/pi-seed/settings.json"
+[ -f "$dir/prompts/prompt.template.md" ] || cp "$KIT/prompts/prompt.template.md" "$dir/prompts/prompt.template.md"
+if [ -n "$mission" ]; then cp "$mission" "$dir/mission.md"
+elif [ ! -f "$dir/mission.md" ]; then printf 'MISSION: <edit %s/mission.md — one paragraph: what done looks like, the constraints, what counts as proof>\n' "$dir" > "$dir/mission.md"; fi
+for f in gpuclaim.sh ramcheck.sh; do [ -f "$dir/shared/$f" ] || install -m 755 "$KIT/shared/$f" "$dir/shared/$f"; done
+[ -f "$dir/shared/README.md" ] || sed -e "s/{{ROOM}}/$room/g" -e "s/{{SWARM}}/$name/g" "$KIT/shared/README.template.md" > "$dir/shared/README.md"
+[ -f "$dir/shared/BOARD.md" ] || printf '# BOARD — %s\n\nClaims (one line each: name, task, where output lands, ETA). Append; never rewrite others.\n\n## ROLES\n\n## CLAIMS\n\n## DONE\n' "$name" > "$dir/shared/BOARD.md"
+[ -f "$dir/shared/RESULTS.md" ] || printf '# RESULTS — %s\n\nOne row per measurement: who, what, exact command, numbers, state it ran in, raw log path.\n' "$name" > "$dir/shared/RESULTS.md"
+
+# keeper: reuse or create (anet init is idempotent: on an existing home it loads the key and prints the address)
+if [ -n "$keeper" ]; then
+  echo "$keeper" > "$dir/keeper/address"; keeper_note="reusing the room-keeper at $keeper (make sure that keeper service is running)"
+elif [ -f "$dir/keeper/key" ]; then
+  keeper=$(tr -d '[:space:]' < "$dir/keeper/address"); keeper_note="existing keeper identity $keeper"
+else
+  out=$(anet_init keeper "$dir/keeper") || exit 1
+  keeper=$(addr_of "$out"); echo "$keeper" > "$dir/keeper/address"; chmod 600 "$dir/keeper/key"
+  keeper_note="NEW keeper identity $keeper — run the keeper service (host, Node 22+, built copy):
+    cd $KIT/image/agent-network && KEEPER_HOME=$dir/keeper XMTP_ENV=dev npm run keeper     (keep it in tmux)"
+fi
+# owner: the observer's identity and the human's voice on the network
+out=$(anet_init owner "$dir/owner/home") || exit 1
+owner=$(addr_of "$out"); chmod 600 "$dir/owner/home/key"
+tmp=$(mktemp); jq --arg k "$keeper" --arg o "$owner" '. + {keeper: $k, owner: $o}' "$dir/names.json" > "$tmp" && mv "$tmp" "$dir/names.json" && chmod 644 "$dir/names.json"
+for h in "$dir"/*/home; do [ -d "$h" ] && cp "$dir/names.json" "$h/names.json"; done
+chmod 700 "$dir/keeper" "$dir/owner"
+
+cat <<K
+swarm "$name" at $dir
+  room:            $room            (every agent joins it at launch; cloud agents: anet join $room)
+  keeper:          $keeper_note
+  owner identity:  $dir/owner/home ($owner)
+  mission:         $dir/mission.md   <- edit this first; it is rendered into every prompt
+  API keys:        $dir/env          (DEEPSEEK_API_KEY=… etc.; 0600; --env-file copies one in)
+  image:           $IMAGE            (SWARM_DIR=$dir $HERE/swarmctl build --tag $tag)
+  relay:           $relay            (cloud agents; cloud/README.md)
+
+next:
+  export SWARM_DIR=$dir
+  $HERE/add-agent.sh alice --lane "…"                                  # pi agent (deepseek/deepseek-flash by default)
+  $HERE/add-agent.sh bob --harness sdk --model deepseek-flash --lane "…"  # OpenAI Agents SDK runner
+  $HERE/swarmctl launch all
+  $HERE/swarm-say "\$(cat $KIT/prompts/kickoff.example.md)"               # the kickoff, as owner, into $room
+  (cd $KIT/image/agent-network && AGENT_HOME=$dir/owner/home AGENT_NAME=owner ROOM=$room KEEPER_ADDRESS=$keeper PORT=8787 npm run observer)   # the room UI
+K

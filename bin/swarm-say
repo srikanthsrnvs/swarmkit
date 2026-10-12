@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Speak as the swarm's owner identity: bin/swarm-say "<text>" [room|@name]   (default target: the swarm's room)
+# Uses the built host copy of agent-network (bin/stage-agent-network.sh --build) and <swarm>/owner/home.
+# Long text (> 4000 chars) goes to <swarm>/shared/owner/<stamp>.md with a one-line pointer in the room — a 44k-character
+# paste once landed verbatim in twelve contexts. `bin/swarm-say --inbox [--wait S]` reads the owner's inbox instead.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(dirname "$HERE")
+SWARM=${SWARM_DIR:-$HOME/swarms/default}
+ANET="${AGENT_NETWORK:-$KIT/image/agent-network}/packages/cli/bin/anet.mjs"
+[ -f "$ANET" ] || { echo "no host copy of agent-network at $(dirname "$ANET")/../../..; run bin/stage-agent-network.sh --build" >&2; exit 1; }
+export AGENT_HOME="$SWARM/owner/home" AGENT_NAME=owner KEEPER_ADDRESS="$(tr -d '[:space:]' < "$SWARM/keeper/address")" XMTP_ENV=${XMTP_ENV:-dev}
+if [ "${1:-}" = --inbox ]; then shift; exec node "$ANET" inbox "$@"; fi
+text=${1:?text}; target=${2:-$(cat "$SWARM/room")}
+if [ ${#text} -gt 4000 ] && [[ "$target" != @* ]]; then
+  stamp=$(date -u +%Y%m%dT%H%M%SZ); mkdir -p "$SWARM/shared/owner"; printf '%s\n' "$text" > "$SWARM/shared/owner/$stamp.md"
+  first=$(printf '%s' "$text" | head -c 300 | tr '\n' ' ')
+  text="@everyone — owner posted a long document ($(( ${#text} / 1000 ))k chars): read /swarm/shared/owner/$stamp.md. Starts: $first …"
+fi
+[[ "$target" == *" "* ]] && { echo "target must be a room or @name" >&2; exit 2; }
+node "$ANET" rooms 2>/dev/null | grep -q "\"${target#@}\"" || [[ "$target" == @* ]] || node "$ANET" join "$target" >/dev/null
+printf '%s' "$text" | node "$ANET" send "${target#@}" -

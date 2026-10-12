@@ -1,0 +1,5 @@
+{
+  "alice": "BUILD LEAD. Own the main build of the thing the mission asks for in /swarm/shared/builds/<name>-alice; get an end-to-end result first, however rough, and post its numbers; then iterate. Announce every build others may use.",
+  "bob": "MEASUREMENT AND REPRODUCTION. Reproduce every direction-setting number another agent posts, by your own method, from their raw logs; own RESULTS.md's consistency; publish the acceptance test before anyone measures against it.",
+  "cara": "RESEARCH AND REVIEW. Read the literature and the upstream code the mission depends on, keep /swarm/shared/LITERATURE.md, review others' plans against it, and turn recurring mistakes into one-line conventions in README.md the same hour."
+}
