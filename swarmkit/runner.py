@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import os
 import sys
@@ -21,12 +22,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-try:  # the anet Python package from agent-network (pip install -e ../agent-network/python), else the built-in client
-    import anet  # type: ignore
-    NET_IMPL = "anet"
+from swarmkit import netshim
+
+try:  # the anet Python package from agent-network (python/ in its v0.3.0+ tag), for relays over HTTPS
+    import anet as anet_pkg  # type: ignore
 except ImportError:  # pragma: no cover
-    from swarmkit import netshim as anet  # type: ignore
-    NET_IMPL = "swarmkit.netshim"
+    anet_pkg = None
+anet = anet_pkg or netshim  # SKILL_SHORT etc.; the connection itself is chosen per URL in connect() below
+NET_IMPL = "anet" if anet_pkg else "swarmkit.netshim"
 
 from swarmkit.prompt import render_prompt
 
@@ -86,19 +89,44 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def connect(name: str, url: str | None, token_file: str | None):
-    """anet.connect in whichever spelling the installed package has; env is the common denominator."""
+    """A relay over HTTPS goes through the anet package when it is installed (it verifies the token with /v1/whoami);
+    the sandbox's own daemon socket (unix://…/netd.sock, no token) only the built-in client speaks, so that path always
+    takes swarmkit.netshim (which also starts `anet daemon` when the socket is missing)."""
+    global NET_IMPL
     token = None
     if token_file:
         token = Path(os.path.expanduser(token_file)).read_text().strip()
         os.environ["AGENTNET_TOKEN"] = token
     if url:
         os.environ["AGENTNET_URL"] = url
-    for call in (lambda: anet.connect(name, url=url, token=token), lambda: anet.connect(name), lambda: anet.connect()):
-        try:
-            return call()
-        except TypeError:
-            continue
-    raise SystemExit("anet.connect: no supported signature")
+    url = url or os.environ.get("AGENTNET_URL")
+    token = token or os.environ.get("AGENTNET_TOKEN")
+    if anet_pkg is not None and url and not url.startswith("unix://") and token:
+        NET_IMPL = "anet"
+        return anet_pkg.connect(name, url=url, token=token)
+    NET_IMPL = "swarmkit.netshim"
+    return netshim.connect(name, url=url, token=token)
+
+
+def poll_inbox(net, wait: int):
+    """One long-poll, whatever the client: netshim.inbox_once, the anet package's poll (its inbox() never returns on a
+    quiet network), else one message off an inbox() iterator."""
+    if hasattr(net, "inbox_once"):
+        return net.inbox_once(wait)
+    if hasattr(net, "poll"):
+        return net.poll(wait)
+    return list(_take_one(net.inbox(wait)))
+
+
+def wire_of(msg) -> dict:
+    if hasattr(msg, "to_dict"):
+        return msg.to_dict()
+    if dataclasses.is_dataclass(msg):
+        d = dataclasses.asdict(msg)
+        if "from_" in d:
+            d["from"] = d.pop("from_")
+        return d
+    return {"text": str(msg)}
 
 
 def build_agent(args: argparse.Namespace, net, instructions: str):
@@ -189,14 +217,14 @@ async def main_async(args: argparse.Namespace) -> int:
         if args.idle_exit:
             wait = max(1, min(wait, int(args.idle_exit - (time.time() - last_activity)) + 1))
         try:
-            batch = await asyncio.to_thread(net.inbox_once, wait) if hasattr(net, "inbox_once") else await asyncio.to_thread(lambda: list(_take_one(net.inbox(wait))))
+            batch = await asyncio.to_thread(poll_inbox, net, wait)
         except Exception as e:
             log.write("error", trigger="inbox", error=str(e)[:400])
             await asyncio.sleep(5)
             continue
         for msg in batch:
             last_activity = time.time()
-            wire = msg.to_dict() if hasattr(msg, "to_dict") else {"text": str(msg)}
+            wire = wire_of(msg)
             log.write("recv", **{("msg_ts" if k == "ts" else k): v for k, v in wire.items()})
             sender = (getattr(msg, "sender", None) or getattr(msg, "from_", None) or "").lower()
             if args.skip_keeper and sender == "keeper":
