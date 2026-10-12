@@ -179,11 +179,8 @@ cmd_status() {
     up=$(docker container inspect -f '{{.State.Running}}' "$c" 2>/dev/null || echo missing)
     run=idle
     if [ "$up" = true ]; then
-      case "$h" in
-        pi) docker exec -u agent "$c" pgrep -x pi >/dev/null 2>&1 && run="pi running";;
-        sdk) docker exec -u agent "$c" pgrep -f '[s]warmkit.run' >/dev/null 2>&1 && run="sdk running";;
-      esac
-      if docker exec -u agent "$c" pgrep -f 'relay/dist/daemon.js' >/dev/null 2>&1; then [ "$run" = idle ] && run="daemon running" || run="$run + daemon"; fi
+      if docker exec -u agent "$c" python -m swarmkit.processes "$h"; then run="$h running"; fi
+      if docker exec -u agent "$c" python -m swarmkit.processes daemon; then [ "$run" = idle ] && run="daemon running" || run="$run + daemon"; fi
     fi
     q=$(grep -c . "$SWARM/$n/home/netd-queue.jsonl" 2>/dev/null || true); q=${q:-0}
     printf '%-8s container %-8s %-18s queue %s\n' "$n" "$( [ "$up" = true ] && echo up || echo "$up" )" "$run" "$q"

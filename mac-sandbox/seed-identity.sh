@@ -20,6 +20,17 @@ if docker exec -u agent "$NAME" pgrep -f "adapters/pi" >/dev/null 2>&1; then
 fi
 [ -f "$SRC/key" ] || { echo "no key at $SRC/key" >&2; exit 1; }
 
+# pi is not the only owner: a resident anet daemon also holds the identity database.
+if command -v lsof >/dev/null; then
+  for file in "$SRC"/xmtp-*.db3 "$SRC"/xmtp-*.db3-wal "$SRC"/xmtp-*.db3-shm; do
+    [ -e "$file" ] || continue
+    if lsof -t -- "$file" >/dev/null 2>&1; then echo "refusing: a network client holds the source identity database" >&2; exit 1; fi
+  done
+fi
+if docker exec -u agent "$NAME" pgrep -f '[r]elay/dist/daemon.js' >/dev/null 2>&1; then
+  echo "refusing: a network daemon is running inside $NAME; stop it before seeding" >&2; exit 1
+fi
+
 docker exec -u agent "$NAME" mkdir -p "$DST"
 copied=()
 for f in key names.json xmtp-dev.db3 xmtp-dev.db3-wal xmtp-dev.db3-shm xmtp-dev.db3.sqlcipher_salt xmtp-dev.cursor; do

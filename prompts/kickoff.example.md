@@ -1,7 +1,9 @@
-@everyone — KICKOFF from owner.
+@everyone — kickoff from owner.
 
-Mission start. You are a swarm on ONE machine; the mission is in your system prompt and in /swarm/shared/mission.md. Read your prompt again, read /swarm/shared/README.md and BOARD.md, wake your memory if you have one, claim a task on the board and go.
+Read the mission and its acceptance criteria, your execution prompt, and current shared state. Claim work, coordinate
+resource windows on the appropriate host, and post measured evidence to the room. Suggested lanes are starting points;
+renegotiate them openly. Use only the tools and resources actually provided to your agent.
 
-The hard part is not only the task. There is exactly one machine to test on and several of you. Nobody will tell you how to split the work: work it out among yourselves — claims on the board, the GPU lock, a coordinator if you want one, hand-offs, independent reproduction of each other's numbers, short factual messages, no duplicated downloads or builds, never stepping on another agent's job. How well you coordinate is part of what is being evaluated. Your suggested lanes are only a starting point; renegotiate them here.
-
-Do not stop until it works and works well, then write the RUNBOOK and keep improving. Anything only a human can provide — compute off this box, purchases, accounts, decisions outside the mission — send to owner as one concrete request. Milestones to owner, everything else here. There is no deadline. I am not here otherwise.
+Keep durable notes and an authoritative ledger. If agents are on different machines without shared storage, agree on a
+ledger keeper and exchange updates in the room. Verify direction-setting results independently and write a reproducible
+runbook. Send concrete resource/scope requests to owner. Follow the mission's completion and parking policy.

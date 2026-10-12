@@ -179,11 +179,7 @@ case "$cmd" in
       h=$(harness_of "$n")
       if in_tmux "$n"; then
         # the tmux window outlives a dead harness (the launch line ends in `echo '... exited'; sleep`), so check the process itself
-        case "$h" in
-          pi) pat="pgrep -x pi >/dev/null 2>&1 || pgrep -f '[/]bin/pi|[/]pi-coding-agent/.*cli.js' >/dev/null 2>&1";;
-          *) pat="pgrep -f '[s]warmkit.run' >/dev/null 2>&1";;
-        esac
-        if docker exec -u agent "$(cname "$n")" sh -c "$pat"; then echo "$n: $h running"; else echo "$n: $h NOT running (exited inside tmux; swarmctl kill $n then launch $n)"; fi
+        if docker exec -u agent "$(cname "$n")" python -m swarmkit.processes "$h"; then echo "$n: $h running"; else echo "$n: $h NOT running (exited inside tmux; swarmctl kill $n then launch $n)"; fi
       else echo "$n: $h NOT running"; fi
     done; echo
     nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null || true; free -g 2>/dev/null | head -2 || true

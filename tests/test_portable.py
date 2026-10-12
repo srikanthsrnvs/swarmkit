@@ -196,3 +196,10 @@ def test_staging_refuses_a_resident_node_with_a_relative_script_path(tmp_path):
         assert (staged / ".commit").read_text() == "old"
     finally:
         proc.terminate(); proc.wait(5)
+
+
+def test_liveness_excludes_a_wrapper_shell_after_the_sdk_exits():
+    from swarmkit.processes import matches
+    assert not matches(["bash", "-c", "python -m swarmkit.run --name alice; echo exited; sleep 999999"], "sdk")
+    assert matches(["/opt/swarmkit/.venv/bin/python", "-m", "swarmkit.run", "--name", "alice"], "sdk")
+    assert not matches(["python", "-c", "import swarmkit.run"], "sdk")
