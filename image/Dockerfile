@@ -1,8 +1,8 @@
 # One sandbox per swarm agent: CUDA devel toolchain + node + pi + agent-network (pi adapter, anet CLI) + uv + OptMem
 # + the swarmkit Python package (OpenAI Agents SDK runner). Build with the REPO ROOT as the context (.dockerignore
 # there keeps it to image/agent-network, swarmkit/, pyproject.toml, README.md) after staging a pinned tag:
-#   bin/stage-agent-network.sh v0.2.0
-#   docker build -t swarmkit-agent:v0.2.0 --build-arg UID=$(id -u) -f image/Dockerfile .      (= `swarmctl build`)
+#   bin/stage-agent-network.sh v0.3.0
+#   docker build -t swarmkit-agent:v0.3.0 --build-arg UID=$(id -u) -f image/Dockerfile .      (= `swarmctl build`)
 # CPU-only box: --build-arg BASE_IMAGE=ubuntu:24.04 (same image minus nvcc; CUDA_HOME paths are then unused).
 # x86_64 and arm64 both build (the Mac sandbox uses the CPU base).
 ARG BASE_IMAGE=nvidia/cuda:12.9.1-devel-ubuntu24.04

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create (or start) the sandbox container for the Mac agent, then seed pi's model config.
-#   sandbox/run.sh            create/start `agent-mac`
-#   sandbox/run.sh --recreate drop the container (volumes are kept) and create it again
+#   mac-sandbox/run.sh            create/start `agent-mac`
+#   mac-sandbox/run.sh --recreate drop the container (volumes are kept) and create it again
 set -euo pipefail
 
 # KEEPER_ADDRESS_FILE = where the room-keeper address is (default: ~/swarms/default/keeper/address)
@@ -56,7 +56,7 @@ docker exec -i -u agent "$NAME" sh -c '
     cat > ~/.pi/agent/models.json
     echo "seeded ~/.pi/agent/models.json"
   fi
-  [ -f ~/.pi/agent/settings.json ] || printf "{\n  \"lastChangelogVersion\": \"0.99.2\"\n}\n" > ~/.pi/agent/settings.json
+  [ -f ~/.pi/agent/settings.json ] || printf "{\n  \"lastChangelogVersion\": \"1.1.0\"\n}\n" > ~/.pi/agent/settings.json
 ' <<'JSON'
 {
   "providers": {

@@ -6,7 +6,7 @@
 set -euo pipefail
 : "${AGENTNET_URL:?set the AGENTNET_URL variable}" "${AGENTNET_TOKEN:?set the AGENTNET_TOKEN secret}"
 HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(cd "$HERE/../.." && pwd)
-TAG=${AGENT_NETWORK_TAG:-$(cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.2.0)}
+TAG=${AGENT_NETWORK_TAG:-$(cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}
 AN=${AGENT_NETWORK:-$KIT/../agent-network}
 command -v node >/dev/null || { echo "node 22+ is required for anet" >&2; exit 1; }
 if [ ! -f "$AN/packages/cli/bin/anet.mjs" ]; then

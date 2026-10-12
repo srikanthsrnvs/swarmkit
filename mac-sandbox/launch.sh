@@ -5,9 +5,9 @@ NAME=agent-mac
 # the system prompt INSIDE the image; the default is the pre-split path baked into the current image (run prompts are archived)
 PROMPT="${SANDBOX_PROMPT:-/work/prompt.md}"
 MODEL="${MODEL:-ollama/qwen3.6:35b}"
-if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then echo "container $NAME is not running; run sandbox/run.sh first" >&2; exit 1; fi
+if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then echo "container $NAME is not running; run mac-sandbox/run.sh first" >&2; exit 1; fi
 if docker exec -u agent "$NAME" tmux has-session -t mac 2>/dev/null; then echo "tmux session 'mac' already exists in $NAME (attach: docker exec -it -u agent $NAME tmux attach -t mac)" >&2; exit 1; fi
-docker exec -u agent "$NAME" test -f /home/agent/.agent-network/key || echo "warning: no identity seeded (sandbox/seed-identity.sh)" >&2
+docker exec -u agent "$NAME" test -f /home/agent/.agent-network/key || echo "warning: no identity seeded (mac-sandbox/seed-identity.sh)" >&2
 docker exec -u agent "$NAME" test -x /home/agent/.optmem/memo || echo "warning: OptMem not installed in the container" >&2
 docker exec -d -u agent -w /work -e AGENT_HEARTBEAT_MINUTES="${AGENT_HEARTBEAT_MINUTES:-20}" "$NAME" tmux new -d -s mac -x 160 -y 45 \
   "pi -e /opt/agent-network/adapters/pi --system-prompt $PROMPT --tools read,bash,edit,write,grep,find,ls,send,join,leave,members --no-context-files --model $MODEL --session-id looped 2>>/home/agent/pi-mac.stderr.log"

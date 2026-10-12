@@ -6,4 +6,4 @@ agents-as-tools, Sessions, tracing) — `swarmkit.runner` is one swarm agent on 
 agents-as-tools. The shell side (bin/, image/) puts each agent in its own Docker sandbox with caps and GPUs.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

@@ -28,7 +28,7 @@ set -euo pipefail
 KIT=$(cd "$(dirname "$0")/.." && pwd)
 SWARM=${SWARM_DIR:-$HOME/swarms/default}
 SWARM_NAME=$(basename "$SWARM")
-TAG=${AGENT_NETWORK_TAG:-$(cat "$SWARM/agent-network.tag" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.2.0)}
+TAG=${AGENT_NETWORK_TAG:-$(cat "$SWARM/agent-network.tag" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}
 IMAGE=${IMAGE:-swarmkit-agent:$TAG}
 NAMES=(); [ -f "$SWARM/agents.txt" ] && mapfile -t NAMES < <(grep -v '^\s*$' "$SWARM/agents.txt")
 MODEL=${MODEL:-deepseek/deepseek-flash}
@@ -137,7 +137,8 @@ case "$cmd" in
     need_swarm
     echo "swarm $SWARM_NAME ($SWARM), image $IMAGE, room $(cat "$SWARM/room" 2>/dev/null || echo '?')"
     docker ps -a --filter "name=swarmkit-$SWARM_NAME-" --format 'table {{.Names}}\t{{.Status}}' ; echo
-    docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}' $(docker ps --filter "name=swarmkit-$SWARM_NAME-" -q) 2>/dev/null || true; echo
+    mapfile -t ids < <(docker ps --filter "name=swarmkit-$SWARM_NAME-" -q)
+    [ ${#ids[@]} -eq 0 ] || docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.PIDs}}' "${ids[@]}" 2>/dev/null || true; echo
     for n in "${NAMES[@]}"; do running "$n" || { echo "$n: container down"; continue; }
       h=$(harness_of "$n")
       if in_tmux "$n"; then

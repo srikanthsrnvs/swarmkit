@@ -11,7 +11,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(dirname "$HERE")
 SWARM=${SWARM_DIR:-$HOME/swarms/default}; export SWARM_DIR=$SWARM
-TAG=${AGENT_NETWORK_TAG:-$(cat "$SWARM/agent-network.tag" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.2.0)}
+TAG=${AGENT_NETWORK_TAG:-$(cat "$SWARM/agent-network.tag" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}
 IMAGE=${IMAGE:-swarmkit-agent:$TAG}
 name=${1:?name}; shift
 [[ "$name" =~ ^[a-z][a-z0-9]{1,15}$ ]] || { echo "bad name: $name (lowercase letters/digits, 2-16 chars)" >&2; exit 1; }

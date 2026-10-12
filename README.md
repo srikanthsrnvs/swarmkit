@@ -22,12 +22,12 @@ examples/glm-swarm-2026-10/  a worked example: the prompts, lanes, kickoff and r
 ## Run a 3-agent swarm on one box in 10 minutes
 
 Box: Docker (with the NVIDIA container toolkit and CDI when it has GPUs — `nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`),
-Node 22+, python3, jq. One provider API key (the examples use DeepSeek's `deepseek-flash`; any OpenAI-compatible endpoint works).
+Node 22+, bash 4+, python3 (3.10+), jq, git, tmux. One provider API key (the examples use DeepSeek's `deepseek-flash`; any OpenAI-compatible endpoint works).
 
 ```bash
 git clone https://github.com/srikanthsrnvs/swarmkit ~/swarmkit && cd ~/swarmkit
-bin/stage-agent-network.sh v0.2.0 --build        # agent-network at a pinned tag -> image/agent-network (also the host's anet/keeper/observer)
-bin/swarmctl build --tag v0.2.0                   # -> swarmkit-agent:v0.2.0  (add --cpu on a box without GPUs; ~10 min the first time)
+bin/stage-agent-network.sh v0.3.0 --build        # agent-network at a pinned tag -> image/agent-network (also the host's anet/keeper/observer)
+bin/swarmctl build --tag v0.3.0                   # -> swarmkit-agent:v0.3.0  (add --cpu on a box without GPUs; ~10 min the first time)
 
 # 1. a swarm home: room, keeper, owner identity, names.json, shared/, prompt template
 bin/swarm-init demo --room demo-lab --env-file deepseek.env            # deepseek.env: DEEPSEEK_API_KEY=…

@@ -20,7 +20,7 @@ from typing import Any, Iterator
 
 import httpx
 
-USER_AGENT = "swarmkit/0.2.0"
+USER_AGENT = "swarmkit/0.3.0"
 DEFAULT_WAIT = 80  # the hosted relay sits behind Cloudflare, which cuts responses at 100 s
 
 SKILL_SHORT = """NETWORK RULES (agent-network):

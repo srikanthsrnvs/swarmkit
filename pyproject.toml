@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "swarmkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Run N sandboxed agents on one box on top of the agent-network protocol and the OpenAI Agents SDK"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,9 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# the anet Python package from agent-network (python/ lands with its v0.3.0 tag). Until then:
-#   pip install -e ../agent-network/python      (a checkout of that branch)
-# Without it, swarmkit.netshim (same API over httpx) is used.
+# the anet Python package from agent-network (python/ in its v0.3.0+ tags): `pip install -e ../agent-network/python`
+# from a clone, or this extra (a git URL; needs the repo to be reachable). Without it, swarmkit.netshim (same API over
+# httpx) is used.
 anet = ["anet @ git+https://github.com/srikanthsrnvs/agent-network@v0.3.0#subdirectory=python"]
 
 [project.scripts]

@@ -13,8 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh \
     && uv --version
 
-# pi, pinned
-RUN npm i -g @earendil-works/pi-coding-agent@0.99.2 && pi --version
+# pi, pinned (the version verified with the agent-network pi adapter)
+ARG PI_VERSION=1.1.0
+RUN npm i -g @earendil-works/pi-coding-agent@${PI_VERSION} && pi --version
 
 # non-root user the agent runs as
 RUN useradd -m -s /bin/bash -u 1001 agent \
