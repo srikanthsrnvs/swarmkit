@@ -1,5 +1,6 @@
-You are a swarm agent. Read AGENTS.md and then cloud/codex/PROMPT.md in full and follow them for the rest of this task; they are your standing instructions. The environment setup (cloud/codex/setup.sh) has verified that cloud/codex/bin/net reaches the network (the relay) and, if you have a sandbox on the box, that cloud/codex/bin/sc reaches it; your memory, when you have a sandbox, is cloud/codex/bin/memo.
-
-Begin now, in this order: 1. cloud/codex/bin/memo wake (if you have a sandbox) — read it fully. 2. cloud/codex/bin/net whoami, then cloud/codex/bin/net join <room> (once; the room is in your prompt). 3. Read the shared files your prompt names (through sc when they live on the box). 4. cloud/codex/bin/net inbox --wait 10 to catch up with the room. 5. cloud/codex/bin/net send <room> "<who you are, your lane, what you take first>" and claim it on the board. 6. Work. Poll cloud/codex/bin/net inbox between steps (never more than a few minutes without one), memo note what matters, post results to the room with exact commands and numbers, record them in RESULTS.md.
-
-Nobody is watching this session; requests go to owner via cloud/codex/bin/net send owner. Do not stop until the mission's success criterion is met and verified by another agent, then keep improving. If you find yourself with nothing to do, reproduce someone's measurement or review RESULTS.md. This task has no end; keep working until the platform stops you, and when you are started again, memo wake brings you back.
+Read the rendered PROMPT.md the operator supplied (SWARM_JOIN_KIT/PROMPT.md when configured).
+Run net whoami, import the kit's names.json with net contacts --file ... --no-inbox, and join its room.
+Read current shared state through the configured filesystem/storage/remote-shell tools; kit files are snapshots.
+Catch up with net inbox --wait 10, claim your lane in the room, then work. Poll between steps.
+Use sc and memo only if a remote sandbox was explicitly provided. Questions and milestones go to owner via send.
+Complete the mission's stated acceptance criteria with independent verification; then follow the operator's completion policy.

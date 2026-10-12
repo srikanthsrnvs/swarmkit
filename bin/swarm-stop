@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Stop this swarm's owned processes and containers; retain data and relay credentials.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(dirname "$HERE")
+SWARM=${SWARM_DIR:-$HOME/swarms/default}; AN=${AGENT_NETWORK:-$KIT/image/agent-network}
+while read -r name; do
+  [ -n "$name" ] || continue
+  container="swarmkit-$(basename "$SWARM")-$name"
+  if docker inspect "$container" >/dev/null 2>&1; then
+    "$HERE/swarmctl" kill "$name" >/dev/null 2>&1 || true
+    docker exec -u agent "$container" anet daemon stop >/dev/null 2>&1 || true
+    docker stop "$container" >/dev/null
+  fi
+done < "$SWARM/agents.txt"
+for home in "$SWARM"/*/home; do
+  name=$(basename "$(dirname "$home")")
+  [ "$name" = owner ] || [ "$(cat "$SWARM/$name/harness" 2>/dev/null || true)" = local ] || continue
+  [ -d "$home/netd.lock" ] || continue
+  AGENT_HOME="$home" node "$AN/packages/cli/bin/anet.mjs" daemon stop
+done
+"$HERE/swarm-observer" stop
+tmux -L "swarmkit-$(basename "$SWARM")" kill-session -t status 2>/dev/null || true
+tmux -L "swarmkit-$(basename "$SWARM")" kill-session -t watch 2>/dev/null || true
+echo "swarm stopped; files and relay tokens retained"

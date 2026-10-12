@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Sync the public roster into local homes and this swarm's relay identity scopes.
+set -euo pipefail
+KIT=$(cd "$(dirname "$0")/.." && pwd)
+export PYTHONPATH="$KIT${PYTHONPATH:+:$PYTHONPATH}"
+python3 -m swarmkit.registry sync "$@"
+exec "$KIT/bin/swarm-relay-names" -q

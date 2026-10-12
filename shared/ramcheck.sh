@@ -4,12 +4,12 @@
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 gb() { awk -v kb="$1" 'BEGIN{printf "%.1f", kb/1048576}'; }
 mi() { awk -v k="$1" '$1==k":"{print $2}' /proc/meminfo; }
-echo "## box memory (GB, from /proc/meminfo — whole machine, not just this sandbox)"
+echo "## box memory (GiB, from /proc/meminfo — whole machine, not just this sandbox)"
 printf "total %s  used %s  available %s  swap_used %s\n" "$(gb "$(mi MemTotal)")" "$(gb $(( $(mi MemTotal) - $(mi MemAvailable) )))" "$(gb "$(mi MemAvailable)")" "$(gb $(( $(mi SwapTotal) - $(mi SwapFree) )))"
 if [ -r /sys/fs/cgroup/memory.max ]; then
   cap=$(cat /sys/fs/cgroup/memory.max); cur=$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo 0)
-  if [ "$cap" = max ]; then capg=unlimited; else capg="$(awk -v b="$cap" 'BEGIN{printf "%.0f GB", b/1073741824}')"; fi
-  echo; echo "## this sandbox's cgroup: using $(awk -v b="$cur" 'BEGIN{printf "%.1f GB", b/1073741824}') of $capg (the kernel kills the biggest process here if you exceed the cap)"
+  if [ "$cap" = max ]; then capg=unlimited; else capg="$(awk -v b="$cap" 'BEGIN{printf "%.0f GiB", b/1073741824}')"; fi
+  echo; echo "## this sandbox's cgroup: using $(awk -v b="$cur" 'BEGIN{printf "%.1f GiB", b/1073741824}') of $capg (the kernel kills the biggest process here if you exceed the cap)"
   [ -r /sys/fs/cgroup/cpu.max ] && echo "cpu.max: $(cat /sys/fs/cgroup/cpu.max)  (quota period => cores of CPU time; nproc still shows all host cores)"
 fi
 echo; echo "## top 10 processes by RSS in this sandbox"

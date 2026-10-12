@@ -15,7 +15,8 @@ One log line per request on stdout (run-gateway.sh appends it to $SWARM_DIR/gate
 import hmac, json, os, re, shlex, subprocess, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-HOST, PORT = "127.0.0.1", 8790
+HOST = os.environ.get("SWARM_GATEWAY_BIND", "127.0.0.1")
+PORT = int(os.environ.get("SWARM_GATEWAY_PORT", "8790"))
 SWARM_DIR = os.path.expanduser(os.environ.get("SWARM_DIR", "~/swarms/default"))
 SWARM_NAME = os.path.basename(SWARM_DIR.rstrip("/"))
 TOKENS_FILE = os.path.join(SWARM_DIR, "gateway-tokens.json")
@@ -30,7 +31,7 @@ UPLOAD_PREFIXES = ("/swarm/me/", "/swarm/shared/", "/tmp/")
 
 
 def log(agent, status, ms, what):
-    what = (what or "").replace("\n", "\\n")[:80]
+    what = (what or "").split()[0] if what else "request"  # never log command bodies or credentials
     print(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} agent={agent} exit={status} ms={ms} cmd={what!r}", flush=True)
 
 
@@ -154,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
             code, out, err, ms = docker_exec(container, ["timeout", "-k", "5", str(timeout), "bash", "-lc", cmd],
                                              (stdin or "").encode(), timeout)
             self.send_json(200, {"exit": code, "stdout": truncate(out), "stderr": truncate(err), "ms": ms})
-            log(agent, code, ms, cmd)
+            log(agent, code, ms, "exec")
             return
 
         # /upload

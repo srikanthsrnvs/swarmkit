@@ -6,6 +6,8 @@
 !swarmkit/**
 !pyproject.toml
 !README.md
+!prompts
+!prompts/prompt.template.md
 # never the staged copy's local build products or git state
 image/agent-network/.git
 image/agent-network/node_modules

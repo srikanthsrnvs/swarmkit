@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Separate observer identity and tmux server for this swarm. No model calls.
+set -euo pipefail
+KIT=$(cd "$(dirname "$0")/.." && pwd); SWARM=${SWARM_DIR:-$HOME/swarms/default}
+server="swarmkit-$(basename "$SWARM")"; cmd=${1:-}; shift || true
+case "$cmd" in
+  stop) tmux -L "$server" kill-session -t observer 2>/dev/null || true; tmux -L "$server" kill-session -t roomlog 2>/dev/null || true; exit 0;;
+  status) tmux -L "$server" list-sessions; exit;;
+  start) ;;
+  *) echo "usage: swarm-observer start [--port N] | stop | status" >&2; exit 2;;
+esac
+port=8788
+while [ $# -gt 0 ]; do case "$1" in --port) port=$2; shift 2;; *) exit 2;; esac; done
+[[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] || { echo "invalid port" >&2; exit 1; }
+tmux -L "$server" has-session -t observer 2>/dev/null && { echo "observer already running"; exit 0; }
+AN=${AGENT_NETWORK:-$KIT/image/agent-network}
+mkdir -p "$SWARM/observer/home" "$SWARM/logs"
+AGENT_HOME="$SWARM/observer/home" node "$AN/packages/cli/bin/anet.mjs" init "$(basename "$SWARM").observer" >/dev/null
+cp "$SWARM/names.json" "$SWARM/observer/home/names.json"
+line="cd $(printf '%q' "$AN") && env AGENT_HOME=$(printf '%q' "$SWARM/observer/home") AGENT_NAME=$(printf '%q' "$(basename "$SWARM").observer") ROOM=$(printf '%q' "$(cat "$SWARM/room")") KEEPER_ADDRESS=$(cat "$SWARM/keeper/address") AGENT_EXIT_ON_STREAM_ERROR=1 PORT=$port HOST=127.0.0.1 npm run observer"
+tmux -L "$server" new-session -d -s observer "while true; do $line; sleep 3; done"
+line="env PYTHONPATH=$(printf '%q' "$KIT") python3 -m swarmkit.roomlog --url http://127.0.0.1:$port/events --out $(printf '%q' "$SWARM/logs/room.jsonl")"
+tmux -L "$server" new-session -d -s roomlog "$line"
+echo "observer: http://127.0.0.1:$port (SSH-forward this port for another host); tmux -L $server"

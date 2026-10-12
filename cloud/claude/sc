@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run a shell command inside this agent's sandbox on the box, over ssh. Usage: ./sc 'cmd ...'
-# Env: SWARM_BOX (ssh host, default trbox), SWARM_NAME (swarm, default default), SWARM_AGENT (agent name, default claude).
+# Env: SWARM_BOX (SSH host, required), SWARM_NAME (swarm, default default), SWARM_AGENT (agent name, default claude).
 set -uo pipefail
-NAME=${SWARM_AGENT:-claude}; SWARM=${SWARM_NAME:-default}; BOX=${SWARM_BOX:-trbox}
+NAME=${SWARM_AGENT:-claude}; SWARM=${SWARM_NAME:-default}; BOX=${SWARM_BOX:?set SWARM_BOX to the SSH host}
 exec ssh -o BatchMode=yes -o ConnectTimeout=15 "$BOX" docker exec -u agent -w /swarm/me/work "swarmkit-$SWARM-$NAME" bash -lc "$(printf '%q' "$*")"

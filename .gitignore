@@ -9,3 +9,8 @@ __pycache__/
 .venv/
 dist/
 *.egg-info/
+
+.cache/
+.pytest_cache/
+cloud/codex/PROMPT.md
+join-*/

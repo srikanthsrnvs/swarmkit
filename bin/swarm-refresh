@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Refresh mission and rendered prompts before launch; explicit custom prompts are preserved.
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(dirname "$HERE")
+SWARM=${SWARM_DIR:-$HOME/swarms/default}
+cp "$SWARM/mission.md" "$SWARM/shared/mission.md"
+"$HERE/swarm-sync"
+while read -r name; do
+  [ -n "$name" ] || continue
+  [ ! -f "$SWARM/prompts/$name.custom" ] || continue
+  execution=sandbox; [ "$(cat "$SWARM/$name/harness")" != local ] || execution=local
+  "$KIT/prompts/render-prompts.sh" --template "$SWARM/prompts/prompt.template.md" --name "$name" \
+    --lane-file "$SWARM/prompts/$name.lane" --execution "$execution" --out "$SWARM/prompts/$name.md"
+done < "$SWARM/agents.txt"

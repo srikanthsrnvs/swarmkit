@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Hash the source copied into a sandbox image, including the immutable protocol revision."""
+import hashlib
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[1]
+h = hashlib.sha256()
+files = [root / "image/Dockerfile", root / "pyproject.toml", root / "README.md", root / "prompts/prompt.template.md"]
+files += sorted((root / "swarmkit").glob("*.py"))
+for file in files:
+    h.update(str(file.relative_to(root)).encode() + b"\0" + file.read_bytes() + b"\0")
+ref = root / "image/agent-network/.commit"
+if not ref.exists(): ref = root / "image/agent-network/.tag"
+if ref.exists(): h.update(ref.read_bytes())
+print(h.hexdigest())

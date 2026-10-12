@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Export a credential-free join kit for an agent on any machine/harness.
+set -euo pipefail
+KIT=$(cd "$(dirname "$0")/.." && pwd)
+export PYTHONPATH="$KIT${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m swarmkit.registry export "$@"

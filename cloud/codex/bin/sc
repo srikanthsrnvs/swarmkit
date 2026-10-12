@@ -5,10 +5,10 @@ Usage:  cloud/codex/bin/sc '<cmd ...>'                 all args are joined by sp
         cloud/codex/bin/sc --upload <local-file> <remote-path>   ship a file into the sandbox (/swarm/me/..., /swarm/shared/..., /tmp/...)
 Env:    SWARM_GATEWAY_HOST   the gateway's hostname (no https://)        (required)
         SWARM_GATEWAY_TOKEN  bearer token for THIS agent's sandbox        (required, secret; CODEX_GATEWAY_TOKEN still accepted)
-        SC_TIMEOUT           remote timeout in seconds (default 90, max 3600)
+        SC_TIMEOUT           remote timeout in seconds (default/max 90; SWARM_GATEWAY_MAX_WAIT overrides max)
 Each call is ONE HTTPS POST: the gateway runs `bash -lc <cmd>` in the sandbox (cwd /swarm/me/work, user agent) and
 returns exit code, stdout, stderr. stdout/stderr are relayed, the exit code becomes this process's exit code
-(124 = remote timeout). Network/gateway failures are retried 3 times with 15 s pauses, then exit 255.
+(124 = remote timeout). Uploads retry transport failures; shell commands are never automatically replayed after uncertain failure.
 Long jobs: cloud/codex/bin/sc "tmux new -d -s <job> '<command>'" and poll the log with sc. stdlib only.
 """
 import json, os, sys, time, urllib.error, urllib.request
@@ -36,7 +36,8 @@ def post(path, body, timeout):
                                  headers={"User-Agent": "swarmkit-sc/1.0",  # Cloudflare blocks the default Python-urllib agent
                  "Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
     last = None
-    for attempt in range(1, ATTEMPTS + 1):
+    attempts = ATTEMPTS if path == "/upload" else 1  # never replay a possibly completed shell command
+    for attempt in range(1, attempts + 1):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode("utf-8", "replace"))
@@ -46,7 +47,7 @@ def post(path, body, timeout):
             last = f"HTTP {e.code} from gateway/tunnel"
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
             last = f"{type(e).__name__}: {e}"
-        if attempt < ATTEMPTS:
+        if attempt < attempts:
             sys.stderr.write(f"sc: {last}; retry {attempt}/{ATTEMPTS - 1} in {PAUSE}s\n"); sys.stderr.flush()
             time.sleep(PAUSE)
     die(f"the gateway is unreachable ({last}); the tunnel may be down or SWARM_GATEWAY_HOST stale "
@@ -71,12 +72,15 @@ def main(argv):
         if not res.get("ok"):
             die(f"upload failed: {res}", 1)
         print(f"uploaded {res.get('bytes')} bytes to {remote} (mode {mode})"); return 0
+    stdin = None
+    if argv[0] == "--stdin":
+        stdin = sys.stdin.read(); argv = argv[1:]
     cmd = " ".join(argv)
     try:
-        timeout = max(1, min(int(os.environ.get("SC_TIMEOUT") or 90), 3600))
+        timeout = max(1, min(int(os.environ.get("SC_TIMEOUT") or 90), int(os.environ.get("SWARM_GATEWAY_MAX_WAIT", "90"))))
     except ValueError:
         die("SC_TIMEOUT must be an integer number of seconds", 2)
-    res = post("/exec", {"cmd": cmd, "timeout": timeout}, timeout=timeout + 60)
+    res = post("/exec", {"cmd": cmd, "timeout": timeout, "stdin": stdin}, timeout=timeout + 60)
     out, err = res.get("stdout", ""), res.get("stderr", "")
     if out:
         sys.stdout.write(out); sys.stdout.flush()

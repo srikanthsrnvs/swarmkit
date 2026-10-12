@@ -66,7 +66,11 @@ def main(argv=None) -> int:
             import anet  # type: ignore
         except ImportError:
             from swarmkit import netshim as anet  # type: ignore
-        net = anet.connect()
+        if anet.__name__ == "anet" and not os.environ.get("AGENTNET_TOKEN"):
+            from swarmkit import netshim
+            net = netshim.connect()
+        else:
+            net = anet.connect()
         print(net.send(args.post, f"coordinator → {args.post}: {answer}"[:4000]), file=sys.stderr)
     return 0
 

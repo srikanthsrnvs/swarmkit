@@ -5,12 +5,15 @@ measure — seen in the first smoke run."""
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 
 OUTPUT_LIMIT = 16_000  # characters per stream handed back to the model
 
 
 def _clip(s: str, limit: int = OUTPUT_LIMIT) -> str:
+    if isinstance(s, bytes):
+        s = s.decode("utf-8", "replace")
     return s if len(s) <= limit else s[: limit // 2] + f"\n...[{len(s) - limit} chars cut]...\n" + s[-limit // 2:]
 
 
@@ -26,11 +29,21 @@ def bash_tool(cwd: str | None = None, default_timeout: int = 120, max_timeout: i
         cat /sys/fs/cgroup/memory.max). Long jobs: start them in tmux (`tmux new -d -s job '…'`) and poll their log."""
         t = max(1, min(int(timeout_seconds or default_timeout), max_timeout))
         try:
-            p = subprocess.run(["bash", "-lc", command], cwd=workdir, capture_output=True, text=True, timeout=t, errors="replace")
-        except subprocess.TimeoutExpired as e:
-            return f"exit 124 (timed out after {t} s)\nstdout:\n{_clip(e.stdout or '')}\nstderr:\n{_clip(e.stderr or '')}"
+            p = subprocess.Popen(["bash", "-lc", command], cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 text=True, errors="replace", start_new_session=True)
+            try:
+                stdout, stderr = p.communicate(timeout=t)
+            except subprocess.TimeoutExpired:
+                try: os.killpg(p.pid, signal.SIGTERM)
+                except ProcessLookupError: pass
+                try: stdout, stderr = p.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    try: os.killpg(p.pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
+                    stdout, stderr = p.communicate()
+                return f"exit 124 (timed out after {t} s)\nstdout:\n{_clip(stdout)}\nstderr:\n{_clip(stderr)}"
         except OSError as e:
             return f"exit 127\nstderr:\n{e}"
-        return f"exit {p.returncode}\nstdout:\n{_clip(p.stdout)}\nstderr:\n{_clip(p.stderr)}"
+        return f"exit {p.returncode}\nstdout:\n{_clip(stdout)}\nstderr:\n{_clip(stderr)}"
 
     return bash
