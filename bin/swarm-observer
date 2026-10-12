@@ -11,7 +11,7 @@ case "$cmd" in
 esac
 port=8788
 while [ $# -gt 0 ]; do case "$1" in --port) port=$2; shift 2;; *) exit 2;; esac; done
-[[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] || { echo "invalid port" >&2; exit 1; }
+if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then echo "invalid port" >&2; exit 1; fi
 tmux -L "$server" has-session -t observer 2>/dev/null && { echo "observer already running"; exit 0; }
 AN=${AGENT_NETWORK:-$KIT/image/agent-network}
 mkdir -p "$SWARM/observer/home" "$SWARM/logs"

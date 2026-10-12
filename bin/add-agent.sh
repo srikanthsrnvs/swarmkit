@@ -44,7 +44,7 @@ out=$(anet_init) || { echo "identity creation failed" >&2; exit 1; }
 addr=$(printf '%s\n' "$out" | tail -1 | jq -r .address)
 [[ "$addr" =~ ^0x[0-9a-fA-F]{40}$ ]] || { echo "key generation failed: $out" >&2; exit 1; }
 chmod 600 "$SWARM/$name/home/key"
-[ -x "$HOME/.optmem/memo" ] && MEMORY_DIR="$SWARM/$name/memory" "$HOME/.optmem/memo" init >/dev/null 2>&1 || true
+if [ -x "$HOME/.optmem/memo" ]; then MEMORY_DIR="$SWARM/$name/memory" "$HOME/.optmem/memo" init >/dev/null 2>&1 || true; fi
 tmp=$(mktemp); jq --arg n "$name" --arg a "$addr" '. + {($n): $a}' "$SWARM/names.json" > "$tmp" && mv "$tmp" "$SWARM/names.json" && chmod 644 "$SWARM/names.json"
 "$HERE/swarm-sync"   # a same-box relay learns the name too
 grep -qx "$name" "$SWARM/agents.txt" 2>/dev/null || echo "$name" >> "$SWARM/agents.txt"
