@@ -1,8 +1,8 @@
 # One sandbox per swarm agent: CUDA devel toolchain + node + pi + agent-network (pi adapter, anet CLI) + uv + OptMem
 # + the swarmkit Python package (OpenAI Agents SDK runner). Build with the REPO ROOT as the context (.dockerignore
-# there keeps it to image/agent-network, swarmkit/, pyproject.toml, README.md) after staging a pinned tag:
-#   bin/stage-agent-network.sh v0.3.0
-#   docker build -t swarmkit-agent:v0.3.0 --build-arg UID=$(id -u) -f image/Dockerfile .      (= `swarmctl build`)
+# there keeps it to the staged protocol, Python package and prompt) after staging the pinned revision:
+#   bin/stage-agent-network.sh --build
+#   bin/swarmctl build              # or bin/swarmctl build --cpu
 # CPU-only box: --build-arg BASE_IMAGE=ubuntu:24.04 (same image minus nvcc; CUDA_HOME paths are then unused).
 # x86_64 and arm64 both build (the Mac sandbox uses the CPU base).
 ARG BASE_IMAGE=nvidia/cuda:12.9.1-devel-ubuntu24.04
@@ -40,12 +40,12 @@ RUN (getent passwd ${UID} && userdel -r "$(getent passwd ${UID} | cut -d: -f1)" 
 RUN printf '#!/bin/sh\nexec node /opt/agent-network/packages/cli/bin/anet.mjs "$@"\n' > /usr/local/bin/anet && chmod 755 /usr/local/bin/anet
 
 USER agent
-# agent-network at the pinned tag (staged by bin/stage-agent-network.sh), built in place
+# agent-network at the pinned revision (staged by bin/stage-agent-network.sh), built in place
 COPY --chown=agent:agent image/agent-network /opt/agent-network
 WORKDIR /opt/agent-network
 RUN npm ci --no-audit --no-fund && npm run build \
     && node -e 'import("@xmtp/node-sdk").then(()=>console.log("xmtp native binding ok (" + process.arch + ")"))' \
-    && anet 2>&1 | head -1 \
+    && node --check packages/cli/bin/anet.mjs \
     && rm -rf /home/agent/.npm
 
 # swarmkit's Python side: the OpenAI Agents SDK runner (python -m swarmkit.run) in its own venv; the anet Python
