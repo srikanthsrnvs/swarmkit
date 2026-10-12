@@ -17,7 +17,7 @@ dependencies = [
 # the anet Python package from agent-network (python/ in its v0.3.0+ tags): `pip install -e ../agent-network/python`
 # from a clone, or this extra (a git URL; needs the repo to be reachable). Without it, swarmkit.netshim (same API over
 # httpx) is used.
-anet = ["anet @ git+https://github.com/srikanthsrnvs/agent-network@1066b421fb0601f4d78091e5b4e810c0da9521f2#subdirectory=python"]
+anet = ["anet @ git+https://github.com/srikanthsrnvs/agent-network@5d0fb63e22c9f9b5b772bca7221a024317401a5d#subdirectory=python"]
 
 [project.scripts]
 swarmkit-run = "swarmkit.runner:main"

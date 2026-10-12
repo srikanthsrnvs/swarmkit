@@ -181,3 +181,18 @@ def test_parking_retains_the_rest_of_an_inbox_batch(tmp_path, monkeypatch):
     net.poll = lambda wait: pytest.fail("restart should process the durable pending message first")
     assert asyncio.run(runner.main_async(args)) == 0
     assert json.loads((home / "pending.json").read_text()) == []
+
+
+def test_staging_refuses_a_resident_node_with_a_relative_script_path(tmp_path):
+    kit = tmp_path / "kit"; (kit / "bin").mkdir(parents=True)
+    script = kit / "bin/stage-agent-network.sh"; script.write_text((KIT / "bin/stage-agent-network.sh").read_text())
+    staged = kit / "image/agent-network"; staged.mkdir(parents=True)
+    (staged / ".commit").write_text("old")
+    (staged / "resident.js").write_text("setInterval(() => {}, 1000)")
+    proc = subprocess.Popen(["node", "resident.js"], cwd=staged, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        result = subprocess.run(["bash", str(script), "HEAD", "--from", str(PROTOCOL)], capture_output=True, text=True, timeout=10)
+        assert result.returncode != 0 and "tree is in use" in result.stdout + result.stderr
+        assert (staged / ".commit").read_text() == "old"
+    finally:
+        proc.terminate(); proc.wait(5)

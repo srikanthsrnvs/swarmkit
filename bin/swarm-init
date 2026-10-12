@@ -111,7 +111,7 @@ cat <<K
 swarm "$name" at $dir
   room:            $room            (every agent joins it at launch; cloud agents: anet join $room)
   keeper:          $keeper_note
-  owner identity:  $dir/owner/home ($owner)
+  owner address:   $owner ($(cat "$dir/owner/harness"))
   mission:         $dir/mission.md   <- edit this first; it is rendered into every prompt
   API keys:        $dir/env          (DEEPSEEK_API_KEY=… etc.; 0600; --env-file copies one in)
   image:           $IMAGE            (SWARM_DIR=$dir $HERE/swarmctl build --tag $tag)
@@ -122,6 +122,7 @@ next:
   $HERE/add-agent.sh alice --lane "…"                                  # pi agent (deepseek/deepseek-flash by default)
   $HERE/add-agent.sh bob --harness sdk --model deepseek-flash --lane "…"  # OpenAI Agents SDK runner
   $HERE/swarmctl launch all
-  $HERE/swarm-say "\$(cat $KIT/prompts/kickoff.example.md)"               # the kickoff, as owner, into $room
+  # Local owner: swarm-say sends the kickoff. External owner: send from its own home/token.
+  # Review agent models, caps and budget before launch starts paid turns.
   $HERE/swarm-observer start --port 8788     # its own identity; keep the owner inbox separate
 K

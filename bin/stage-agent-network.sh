@@ -16,12 +16,28 @@ fi
 # Match argv entries, not a broad pkill/pgrep pattern. A running daemon/relay owns this tree.
 python3 - "$DEST" <<'GUARD'
 import shlex, subprocess, sys
-prefix=sys.argv[1].rstrip('/')+'/'
-for line in subprocess.check_output(['ps','-eo','args='],text=True).splitlines():
-    try: args=shlex.split(line)
+from pathlib import Path
+prefix=Path(sys.argv[1]).resolve()
+for line in subprocess.check_output(['ps','-eo','pid=,args='],text=True).splitlines():
+    pid,_,command=line.strip().partition(' ')
+    try: args=shlex.split(command)
     except ValueError: continue
-    if args and 'node' in args[0].rsplit('/',1)[-1] and any(a.startswith(prefix) and a.endswith(('.js','.ts','.mjs')) for a in args[1:]):
-        raise SystemExit('staged protocol tree is in use; stop its owned daemon before rebuilding')
+    if not args or 'node' not in args[0].rsplit('/',1)[-1]: continue
+    try: cwd=Path('/proc/'+pid+'/cwd').resolve(strict=True)
+    except OSError:
+        try:
+            data=subprocess.check_output(['lsof','-a','-p',pid,'-d','cwd','-Fn'],text=True,stderr=subprocess.DEVNULL)
+            cwd=Path(next(x[1:] for x in data.splitlines() if x.startswith('n')))
+        except (OSError,subprocess.SubprocessError,StopIteration): cwd=None
+    for arg in args[1:]:
+        if not arg.endswith(('.js','.ts','.mjs')): continue
+        path=Path(arg)
+        if not path.is_absolute():
+            if cwd is None: continue
+            path=cwd/path
+        if path.resolve().is_relative_to(prefix):
+            raise SystemExit('staged protocol tree is in use; stop its owned daemon before rebuilding')
+
 GUARD
 if [ "$current" != "$revision" ]; then
   temp=$(mktemp -d "$KIT/image/.stage.XXXXXX"); trap 'rm -rf "$temp"' EXIT
