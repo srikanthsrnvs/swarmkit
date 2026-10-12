@@ -47,7 +47,7 @@ def sync(swarm: Path, incoming: Path | None = None) -> dict[str, str]:
 
 
 def register(swarm: Path, name: str, address: str) -> None:
-    if not NAME.fullmatch(name) or name in ("owner", "keeper", "observer") or not ADDRESS.fullmatch(address):
+    if not NAME.fullmatch(name) or name in ("owner", "keeper", "observer", "shared", "prompts", "logs", "secrets") or not ADDRESS.fullmatch(address):
         raise ValueError("name must be 2–16 lowercase letters/digits, not owner/keeper/observer; address must be 0x...")
     names = json.loads((swarm / "names.json").read_text())
     if name in names and names[name].lower() != address.lower():

@@ -82,6 +82,13 @@ def test_relay_provisioning_is_scoped_and_never_prints_tokens(swarm, tmp_path):
     assert "no automatic sandbox" in (home / "prompts/alice.md").read_text()
 
 
+@pytest.mark.parametrize("name", ["shared", "prompts", "observer", "secrets"])
+def test_reserved_paths_cannot_expose_identity_keys(swarm, name):
+    home, env = swarm
+    got = subprocess.run(["bash", str(KIT / "bin/swarm-join"), "join", name, "--harness", "local"], env=env, capture_output=True)
+    assert got.returncode != 0 and not (home / name / "home/key").exists()
+
+
 def test_log_redacts_environment_secrets(tmp_path, monkeypatch):
     secret = "throwaway-secret-for-this-test"
     monkeypatch.setenv("TEST_API_KEY", secret)

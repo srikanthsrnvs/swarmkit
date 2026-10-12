@@ -41,7 +41,7 @@ separate private env file (0600); do not put them in prompts or the repo. Use yo
 will join. Without `--keeper-address`, swarm-init creates a keeper and prints the command to run it.
 
 ```bash
-bin/swarmctl build                       # add --cpu for a machine without CUDA
+bin/swarmctl build                       # CPU host: build --cpu, then swarm-init --cpu
 bin/swarm-init demo --room demo-lab --keeper-address 0xYOUR_KEEPER_ADDRESS \
   --mission-file mission.md --env-file provider.env
 export SWARM_DIR=$HOME/swarms/demo

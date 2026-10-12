@@ -12,15 +12,17 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(dirname "$HERE")
 SWARM=${SWARM_DIR:-$HOME/swarms/default}; export SWARM_DIR=$SWARM
 TAG=${AGENT_NETWORK_TAG:-$(cat "$SWARM/agent-network.tag" 2>/dev/null || cat "$KIT/agent-network.ref" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}
-IMAGE=${IMAGE:-swarmkit-agent:$TAG}
+IMAGE=${IMAGE:-$(cat "$SWARM/image" 2>/dev/null || echo "swarmkit-agent:$TAG")}
 name=${1:?name}; shift
 [[ "$name" =~ ^[a-z][a-z0-9]{1,15}$ ]] || { echo "bad name: $name (lowercase letters/digits, 2-16 chars)" >&2; exit 1; }
+  case "$name" in owner|keeper|observer|shared|prompts|logs|secrets) echo "reserved agent name: $name" >&2; exit 1;; esac
 [ -f "$SWARM/names.json" ] || { echo "no swarm at $SWARM (bin/swarm-init <name> --room <room> first)" >&2; exit 1; }
 harness=pi; mem=48g; cpus=16; lane=""; prompt=""; model=""; envfile=""; container=1
 while [ $# -gt 0 ]; do case "$1" in
   --harness) harness=$2; shift 2;; --model) model=$2; shift 2;; --mem) mem=$2; shift 2;; --cpus) cpus=$2; shift 2;;
   --lane) lane=$2; shift 2;; --lane-file) lane=$(cat "$2"); shift 2;; --prompt) prompt=$2; shift 2;;
   --env-file) envfile=$2; shift 2;; --no-container) container=0; shift;; *) echo "unknown flag $1" >&2; exit 1;; esac; done
+[[ "$cpus" =~ ^[1-9][0-9]*$ ]] || { echo "--cpus must be a positive integer (used for build parallelism)" >&2; exit 1; }
 [ "$harness" != local ] || container=0
 case "$harness" in pi|sdk|local) ;; *) echo "--harness pi|sdk|local" >&2; exit 1;; esac
 jq -e --arg n "$name" 'has($n)' "$SWARM/names.json" >/dev/null && { echo "$name already exists in $SWARM/names.json" >&2; exit 1; }

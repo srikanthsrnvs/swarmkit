@@ -44,6 +44,7 @@ add_token() {
 cmd_join() {
   local name=${1:-}; [ -n "$name" ] || usage; shift
   [[ "$name" =~ ^[a-z][a-z0-9]{1,15}$ ]] || die "bad name: $name (lowercase letters/digits, 2-16 chars)"
+  case "$name" in owner|keeper|observer|shared|prompts|logs|secrets) echo "reserved agent name: $name" >&2; exit 1;; esac
   local harness="" model="" envfile="" mem=48g cpus=16 launch=0; local -a lane=()
   while [ $# -gt 0 ]; do case "$1" in
     --harness) harness=$2; shift 2;; --model) model=$2; shift 2;; --env-file) envfile=$2; shift 2;;
@@ -100,7 +101,11 @@ K
   "$HERE/add-agent.sh" "$name" --harness "$h" --mem "$mem" --cpus "$cpus" "${lane[@]}" "${extra[@]}"
   local addr; addr=$(jq -r --arg n "$name" '.[$n]' "$SWARM/names.json")
 
-  case "$harness" in cli|gateway) echo "$harness" > "$SWARM/$name/harness";; esac
+  case "$harness" in cli|gateway)
+    echo "$harness" > "$SWARM/$name/harness"
+    "$KIT/prompts/render-prompts.sh" --execution remote --workspace /swarm/me/work --shared /swarm/shared \
+      --template "$SWARM/prompts/prompt.template.md" --name "$name" --lane-file "$SWARM/prompts/$name.lane" --out "$SWARM/prompts/$name.md"
+  ;; esac
   case "$harness" in
     pi|sdk)
       if [ $launch = 1 ]; then "$HERE/swarmctl" launch "$name"; fi

@@ -15,10 +15,10 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); KIT=$(dirname "$HERE")
 name=${1:?swarm name}; shift
 [[ "$name" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || { echo "bad swarm name: $name" >&2; exit 1; }
-room=""; relay=https://relay.deepshard.org; keeper=""; dir="$HOME/swarms/$name"; mission=""; envfile=""; tag=""; owner_address=""; from=""; port_base=""
+room=""; relay=https://relay.deepshard.org; keeper=""; dir="$HOME/swarms/$name"; mission=""; envfile=""; tag=""; owner_address=""; from=""; port_base=""; cpu=0; image=""
 while [ $# -gt 0 ]; do case "$1" in
   --room) room=$2; shift 2;; --relay) relay=$2; shift 2;; --keeper-address) keeper=$2; shift 2;; --dir) dir=$2; shift 2;;
-  --mission-file) mission=$2; shift 2;; --env-file) envfile=$2; shift 2;; --tag) tag=$2; shift 2;; --owner-address) owner_address=$2; shift 2;; --from) from=$2; shift 2;; --port-base) port_base=$2; shift 2;; *) echo "unknown flag $1" >&2; exit 1;; esac; done
+  --mission-file) mission=$2; shift 2;; --env-file) envfile=$2; shift 2;; --tag) tag=$2; shift 2;; --owner-address) owner_address=$2; shift 2;; --from) from=$2; shift 2;; --port-base) port_base=$2; shift 2;; --cpu) cpu=1; shift;; --image) image=$2; shift 2;; *) echo "unknown flag $1" >&2; exit 1;; esac; done
 if [ -n "$from" ]; then
   [ -f "$from/agent.json" ] || { echo "--from needs an exported join kit" >&2; exit 1; }
   [ "$name" = "$(jq -r .swarm "$from/agent.json")" ] || { echo "swarm name differs from join kit" >&2; exit 1; }
@@ -33,7 +33,8 @@ room=$(tr '[:upper:]' '[:lower:]' <<<"$room")
 [ -z "$keeper" ] || [[ "$keeper" =~ ^0x[0-9a-fA-F]{40}$ ]] || { echo "--keeper-address must be a 0x address" >&2; exit 1; }
 [ "$dir" = "$HOME/swarm" ] && { echo "refusing $HOME/swarm (legacy swarm home)" >&2; exit 1; }
 tag=${tag:-${AGENT_NETWORK_TAG:-$(cat "$KIT/agent-network.ref" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}}
-IMAGE=${IMAGE:-swarmkit-agent:$tag}
+suffix=""; [ $cpu = 0 ] || suffix=-cpu
+IMAGE=${image:-${IMAGE:-$(cat "$dir/image" 2>/dev/null || echo "swarmkit-agent:$tag$suffix")}}
 [ -z "$mission" ] || [ -f "$mission" ] || { echo "mission file missing" >&2; exit 1; }
 [ -z "$envfile" ] || [ -f "$envfile" ] || { echo "env file missing" >&2; exit 1; }
 if [ -n "$owner_address" ] && [ -f "$dir/names.json" ]; then
@@ -58,6 +59,8 @@ addr_of() { printf '%s\n' "$1" | tail -1 | jq -r .address; }
 if [ -f "$dir/room" ] && [ "$(cat "$dir/room")" != "$room" ]; then echo "existing swarm has a different room" >&2; exit 1; fi
 if [ -f "$dir/keeper/address" ] && [ -n "$keeper" ] && [ "$(cat "$dir/keeper/address")" != "$keeper" ]; then echo "existing swarm has a different keeper" >&2; exit 1; fi
 [ -z "$port_base" ] || { mkdir -p "$dir"; echo "$port_base" > "$dir/port-base"; }
+echo "$IMAGE" > "$dir/image"
+[ $cpu = 0 ] || echo none > "$dir/gpu-mode"
 echo "$name" > "$dir/swarm-name"
 echo "$room" > "$dir/room"; echo "$tag" > "$dir/agent-network.tag"; echo "$relay" > "$dir/relay"
 [ -f "$dir/names.json" ] || echo '{}' > "$dir/names.json"

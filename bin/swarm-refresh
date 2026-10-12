@@ -8,7 +8,8 @@ cp "$SWARM/mission.md" "$SWARM/shared/mission.md"
 while read -r name; do
   [ -n "$name" ] || continue
   [ ! -f "$SWARM/prompts/$name.custom" ] || continue
-  execution=sandbox; [ "$(cat "$SWARM/$name/harness")" != local ] || execution=local
+  execution=sandbox
+  case "$(cat "$SWARM/$name/harness")" in local) execution=local;; cli|gateway) execution=remote;; esac
   "$KIT/prompts/render-prompts.sh" --template "$SWARM/prompts/prompt.template.md" --name "$name" \
     --lane-file "$SWARM/prompts/$name.lane" --execution "$execution" --out "$SWARM/prompts/$name.md"
 done < "$SWARM/agents.txt"

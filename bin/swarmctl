@@ -29,7 +29,8 @@ KIT=$(cd "$(dirname "$0")/.." && pwd)
 SWARM=${SWARM_DIR:-$HOME/swarms/default}
 SWARM_NAME=$(cat "$SWARM/swarm-name" 2>/dev/null || basename "$SWARM")
 TAG=${AGENT_NETWORK_TAG:-$(cat "$SWARM/agent-network.tag" 2>/dev/null || cat "$KIT/agent-network.ref" 2>/dev/null || cat "$KIT/image/agent-network/.tag" 2>/dev/null || echo v0.3.0)}
-IMAGE=${IMAGE:-swarmkit-agent:$TAG}
+IMAGE_OVERRIDE=${IMAGE:-}
+IMAGE=${IMAGE:-$(cat "$SWARM/image" 2>/dev/null || echo "swarmkit-agent:$TAG")}
 NAMES=(); [ -f "$SWARM/agents.txt" ] && mapfile -t NAMES < <(grep -v '^\s*$' "$SWARM/agents.txt")
 MODEL=${MODEL:-deepseek/deepseek-flash}
 PI_EXT=/opt/agent-network/adapters/pi
@@ -69,7 +70,7 @@ exists() { docker container inspect "$(cname "$1")" >/dev/null 2>&1; }
 running() { [ "$(docker container inspect -f '{{.State.Running}}' "$(cname "$1")" 2>/dev/null)" = true ]; }
 harness_of() { cat "$SWARM/$1/harness" 2>/dev/null || echo pi; }
 gpu_flags() {
-  case "${SWARM_GPU:-auto}" in
+  case "${SWARM_GPU:-$(cat "$SWARM/gpu-mode" 2>/dev/null || echo auto)}" in
     none) return;;
     cdi) echo "--device nvidia.com/gpu=all"; return;;
     gpus) echo "--gpus all"; return;;
@@ -87,8 +88,10 @@ case "$cmd" in
     while [ $# -gt 0 ]; do case "$1" in --tag) tag=$2; shift 2;; --cpu) cpu=1; shift;; *) die "unknown flag $1";; esac; done
     "$KIT/bin/stage-agent-network.sh" "$tag"
     base=(); [ $cpu = 1 ] && base=(--build-arg BASE_IMAGE=ubuntu:24.04)
-    cd "$KIT" && docker build -t "swarmkit-agent:$tag" --build-arg SWARMKIT_FINGERPRINT="$("$KIT/bin/image-fingerprint")" --build-arg AGENT_NETWORK_REF="$(cat "$KIT/image/agent-network/.commit")" --build-arg UID="$(id -u)" "${base[@]}" -f image/Dockerfile . \
-      && echo "built swarmkit-agent:$tag" ;;
+    suffix=""; [ $cpu = 0 ] || suffix=-cpu
+    target=${IMAGE_OVERRIDE:-swarmkit-agent:$tag$suffix}
+    cd "$KIT" && docker build -t "$target" --build-arg SWARMKIT_FINGERPRINT="$("$KIT/bin/image-fingerprint")" --build-arg AGENT_NETWORK_REF="$(cat "$KIT/image/agent-network/.commit")" --build-arg UID="$(id -u)" "${base[@]}" -f image/Dockerfile . \
+      && echo "built $target" ;;
   create)
     need_swarm
     recreate=0; [ "${1:-}" = --recreate ] && { recreate=1; shift; }
@@ -101,6 +104,8 @@ case "$cmd" in
       c=$(cname "$n")
       if exists "$n"; then
         [ $recreate = 1 ] || { echo "$c exists (use --recreate to rebuild it; /swarm/me and ~/.pi persist on the host)"; continue; }
+        docker exec -u agent "$c" tmux kill-session -t agent >/dev/null 2>&1 || true
+        docker exec -u agent "$c" anet daemon stop >/dev/null 2>&1 || true
         docker rm -f "$c" >/dev/null && echo "removed $c"
       fi
       mkdir -p "$SWARM/$n"/{home,memory,work,pi/agent,pi/agent/extensions,.ccache} "$SWARM/shared"/{models,builds,hf,extensions,status,locks,logs,bin} "$SWARM/prompts"
