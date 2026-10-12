@@ -44,6 +44,7 @@ chmod 600 "$SWARM/$name/home/key"
 [ -x "$HOME/.optmem/memo" ] && MEMORY_DIR="$SWARM/$name/memory" "$HOME/.optmem/memo" init >/dev/null 2>&1 || true
 tmp=$(mktemp); jq --arg n "$name" --arg a "$addr" '. + {($n): $a}' "$SWARM/names.json" > "$tmp" && mv "$tmp" "$SWARM/names.json" && chmod 644 "$SWARM/names.json"
 for h in "$SWARM"/*/home; do cp "$SWARM/names.json" "$h/names.json"; done
+"$HERE/swarm-relay-names" -q || true   # a same-box relay learns the name too
 grep -qx "$name" "$SWARM/agents.txt" 2>/dev/null || echo "$name" >> "$SWARM/agents.txt"
 grep -q "^$name " "$SWARM/limits.conf" 2>/dev/null || echo "$name $mem $cpus" >> "$SWARM/limits.conf"
 echo "$harness" > "$SWARM/$name/harness"

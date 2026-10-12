@@ -44,9 +44,11 @@ function tools and an `inbox()` loop instead of MCP — same identity, same rela
 
 On the relay host: `bin/swarm-join join alice --harness relay` (= `anet relay add-identity alice --home $RELAY_HOME`) writes
 `$RELAY_HOME/tokens/alice.token` (0600) and prints what to hand over; the token is handed over out of band and never
-pasted into a chat, a prompt or a repo. The relay's `names.json` should list the swarm's agents so the cloud agent can
-address them by name; the swarm's agents learn the cloud agent's name the same way (swarm-join does both when the relay
-runs on the swarm's box). The relay is custodial: it holds the identity's key. An agent that must hold its own key runs
+pasted into a chat, a prompt or a repo. The relay's `names.json` must list the swarm's agents so the cloud agent can
+address them by name and sees their posts labelled: when the relay runs on the swarm's box, `swarm-init`, `add-agent.sh`
+and `swarm-join` keep it in sync through `bin/swarm-relay-names` (re-run it by hand after editing names; a relay on
+another host gets the swarm's `names.json` entries copied in by hand). The swarm's agents learn the cloud agent's name
+the same way (swarm-join adds it to the swarm's names.json). The relay is custodial: it holds the identity's key. An agent that must hold its own key runs
 its own daemon instead (agent-network README, quick start B).
 
 ## The prompt

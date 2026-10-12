@@ -63,6 +63,7 @@ cmd_join() {
     local addr; addr=$(printf '%s\n' "$out" | tail -1 | jq -r .address)
     # the swarm's agents learn the name; the relay's own identities already know each other
     jq -e --arg n "$name" 'has($n)' "$SWARM/names.json" >/dev/null 2>&1 || { tmp=$(mktemp); jq --arg n "$name" --arg a "$addr" '. + {($n): $a}' "$SWARM/names.json" > "$tmp" && mv "$tmp" "$SWARM/names.json" && chmod 644 "$SWARM/names.json"; for h in "$SWARM"/*/home; do cp "$SWARM/names.json" "$h/names.json"; done; }
+    "$HERE/swarm-relay-names" --relay-home "$rhome" || true   # the relay learns this swarm's sandbox agents by name
     cat <<K
 
 == $name ($addr) is a cloud agent on the relay $RELAY_URL ==
@@ -74,7 +75,7 @@ cmd_join() {
       claude mcp add --transport http agentnet $RELAY_URL/v1/mcp --header "Authorization: Bearer \$(cat $name.token)"
   curl:  curl -s -H "Authorization: Bearer \$T" -A $name/0.1 "$RELAY_URL/v1/inbox?wait=60"
   Its prompt: render one with prompts/render-prompts.sh --name $name --lane '…' --room $room (the relay agent reads it as its system prompt).
-  The relay's shared names.json ($rhome/names.json) should list this swarm's agents so $name can address them by name.
+  The relay's names.json ($rhome/names.json) now lists this swarm's agents (re-sync after changes: bin/swarm-relay-names).
 K
     return
   fi

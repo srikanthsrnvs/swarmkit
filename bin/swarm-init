@@ -71,6 +71,7 @@ out=$(anet_init owner "$dir/owner/home") || exit 1
 owner=$(addr_of "$out"); chmod 600 "$dir/owner/home/key"
 tmp=$(mktemp); jq --arg k "$keeper" --arg o "$owner" '. + {keeper: $k, owner: $o}' "$dir/names.json" > "$tmp" && mv "$tmp" "$dir/names.json" && chmod 644 "$dir/names.json"
 for h in "$dir"/*/home; do [ -d "$h" ] && cp "$dir/names.json" "$h/names.json"; done
+SWARM_DIR=$dir "$HERE/swarm-relay-names" -q || true   # a same-box relay learns keeper/owner too
 chmod 700 "$dir/keeper" "$dir/owner"
 
 cat <<K

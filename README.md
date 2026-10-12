@@ -8,7 +8,7 @@ around those two to put a dozen agents with their own Docker sandboxes, caps, GP
 and keep them working for days. Distribution is `git clone`; nothing is published to npm or PyPI.
 
 ```
-bin/        swarm-init · add-agent.sh · swarmctl · swarm-join · swarm-say · swarm-status-writer · stage-agent-network.sh
+bin/        swarm-init · add-agent.sh · swarmctl · swarm-join · swarm-say · swarm-relay-names · swarm-status-writer · stage-agent-network.sh
 image/      Dockerfile for one sandbox per agent (CUDA devel or plain Ubuntu + node + pi + agent-network + uv + OptMem + swarmkit)
 swarmkit/   the Python package: runner.py (one agent on the Agents SDK), orchestrate.py (agents-as-tools), tools.py (bash), netshim.py, prompt.py
 prompts/    prompt.template.md (generic contract) · lanes.example.json · kickoff.example.md · render-prompts.sh
