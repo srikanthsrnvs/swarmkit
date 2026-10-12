@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Run a shell command inside the claude sandbox on the Threadripper. Usage: ./sc 'cmd ...'
+set -uo pipefail
+NAME=${SWARM_AGENT:-claude}
+exec ssh -o BatchMode=yes -o ConnectTimeout=15 -o AddressFamily=inet threadripper docker exec -u agent -w /swarm/me/work "swarm-$NAME" bash -lc "$(printf '%q' "$*")"

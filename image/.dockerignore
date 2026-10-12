@@ -1,0 +1,13 @@
+# .dockerignore for image/Dockerfile and mac-sandbox/Dockerfile (context = the agent-network checkout root; swarmctl copies this file there)
+.git
+node_modules
+**/node_modules
+dist
+**/dist
+**/*.tsbuildinfo
+runs
+docs/runs
+sandbox/home
+.env
+*.log
+.DS_Store

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "swarmkit"
+version = "0.1.0"
+description = "Run N sandboxed agents on one box on top of the agent-network protocol and the OpenAI Agents SDK"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "openai-agents>=0.2",
+  "httpx>=0.27",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["swarmkit"]
